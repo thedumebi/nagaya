@@ -234,11 +234,6 @@ apps:
               exec node doca/api/dist/index.js
             health: /healthcheck
             dotenvx: /app/.env.production
-            credentials:                   # doca's env uses DOCA_-prefixed names
-              pg_user: DOCA_PG_USERNAME
-              pg_password: DOCA_PG_PASSWORD
-              pg_database: DOCA_PG_DATABASE
-              redis_password: DOCA_REDIS_PASSWORD
           doca-web:                        # reads its .env.<NODE_ENV> from the image (DEPLOY.md §1.5)
             port: 8080
             mem: 64m
