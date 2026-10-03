@@ -33,8 +33,10 @@ resources:
 
   redis:
     redis-futari:                          # rate-limit counters for the futari sites
+      version: 8
       mem: 128m
     redis-ofuma:                           # BullMQ queues: must never evict
+      version: 8
       password_env: REDIS_PASSWORD_OFUMA   # key in nagaya's own .env.production
       policy: noeviction
       mem: 256m
@@ -128,6 +130,7 @@ apps:
           frontend:
             port: 8080
             mem: 64m
+            depends_on: [backend]          # its nginx proxies /api to backend
         routes: { dmb: frontend:8080 }     # dmb.futari.live
 
       abm:
@@ -148,6 +151,7 @@ apps:
           frontend:
             port: 8080
             mem: 64m
+            depends_on: [backend]          # its nginx proxies /api to backend
         routes: { abm: frontend:8080 }
 
       nihongo:
@@ -168,6 +172,7 @@ apps:
           frontend:
             port: 8080
             mem: 64m
+            depends_on: [backend]          # its nginx proxies /api to backend
         routes: { nihongo: frontend:8080 }
         cron:
           - name: reminders
@@ -215,9 +220,10 @@ apps:
               exec node ofuma/backend/dist/index.js
             health: /healthcheck
             dotenvx: /app/.env.production
-          frontend:                        # reads its .env.<NODE_ENV> from the image (DEPLOY.md §1.5)
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.5)
             port: 8080
             mem: 64m
+            depends_on: [backend]          # its nginx proxies /api to backend
         routes:
           "@": frontend:8080               # ofuma.ai      │ stg → stg.ofuma.ai
           api: backend:3004                # api.ofuma.ai  │ stg → api-stg.ofuma.ai
@@ -235,9 +241,10 @@ apps:
               exec node doca/api/dist/index.js
             health: /healthcheck
             dotenvx: /app/.env.production
-          doca-web:                        # reads its .env.<NODE_ENV> from the image (DEPLOY.md §1.5)
+          doca-web:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.5)
             port: 8080
             mem: 64m
+            depends_on: [doca-api]         # its nginx proxies /api to doca-api
         routes:
           doca: doca-web:8080              # doca.ofuma.ai      │ stg → doca-stg.ofuma.ai
           api-doca: doca-api:3010          # api-doca.ofuma.ai  │ stg → api-doca-stg.ofuma.ai

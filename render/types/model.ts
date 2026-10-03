@@ -54,7 +54,7 @@ export type CredentialKeys = z.infer<typeof credentialKeysSchema>
 export const dotenvxSchema = z.object({
   path: z.string(), // the env file inside the image (.env.production or .env.staging)
   keyName: z.string(), // <app>-<site>-<service>: the .keys file copied to the box
-  keyFile: z.string(), // the one-key file this container gets: keys/<keyName>.<env>.env
+  keyFile: z.string(), // the one-key file this container gets: keys/<keyName>.<env>.key
 })
 export type Dotenvx = z.infer<typeof dotenvxSchema>
 
@@ -70,6 +70,7 @@ export const serviceSchema = serviceConfigSchema.pick({ port: true, mem: true })
   health: z.string().nullable(),
   mounts: z.array(mountConfigSchema),
   aliases: z.array(z.string()), // on the project network; always includes `key`
+  dependsOn: z.array(z.string()), // service keys of the same project to start first
   public: z.boolean(), // Caddy routes to it, so it also joins the edge network
   nodeEnv: nodeEnvSchema,
   dotenvx: dotenvxSchema.nullable(),
@@ -190,4 +191,5 @@ export interface BuildServiceInput {
   database: Project['database']
   redis: Project['redis']
   isPublic: boolean
+  siteServiceKeys: string[]
 }

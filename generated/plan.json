@@ -1,0 +1,609 @@
+{
+  "root": "/srv/nagaya",
+  "resources": {
+    "postgres": [
+      "pg-main"
+    ],
+    "redis": [
+      {
+        "name": "redis-futari",
+        "passwordEnv": null
+      },
+      {
+        "name": "redis-ofuma",
+        "passwordEnv": "REDIS_PASSWORD_OFUMA"
+      }
+    ]
+  },
+  "projects": [
+    {
+      "id": "futari-dmb",
+      "app": "futari",
+      "site": "dmb",
+      "variant": "prod",
+      "repo": "thedumebi/dmb.futari",
+      "compose": "generated/compose/futari-dmb.yml",
+      "network": "futari-dmb",
+      "ownsNetwork": true,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres",
+            "dmb-postgres"
+          ]
+        },
+        {
+          "container": "redis-futari",
+          "aliases": [
+            "redis",
+            "dmb-redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "dmb",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-futari",
+        "passwordEnv": null
+      },
+      "services": [
+        {
+          "key": "backend",
+          "container": "futari-dmb-backend",
+          "image": "ghcr.io/thedumebi/futari-dmb-backend",
+          "port": 3006,
+          "health": "/healthcheck",
+          "nodeEnv": "production",
+          "dotenvx": {
+            "path": "/app/dmb/backend/.env.production",
+            "keyName": "futari-dmb-backend",
+            "keyFile": "/srv/nagaya/keys/futari-dmb-backend.production.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": null
+          }
+        },
+        {
+          "key": "frontend",
+          "container": "futari-dmb-frontend",
+          "image": "ghcr.io/thedumebi/futari-dmb-frontend",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "production",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "futari-abm",
+      "app": "futari",
+      "site": "abm",
+      "variant": "prod",
+      "repo": "thedumebi/abm.futari",
+      "compose": "generated/compose/futari-abm.yml",
+      "network": "futari-abm",
+      "ownsNetwork": true,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres",
+            "dmb-postgres"
+          ]
+        },
+        {
+          "container": "redis-futari",
+          "aliases": [
+            "redis",
+            "dmb-redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "abm",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-futari",
+        "passwordEnv": null
+      },
+      "services": [
+        {
+          "key": "backend",
+          "container": "futari-abm-backend",
+          "image": "ghcr.io/thedumebi/futari-abm-backend",
+          "port": 3006,
+          "health": "/healthcheck",
+          "nodeEnv": "production",
+          "dotenvx": {
+            "path": "/app/abm/backend/.env.production",
+            "keyName": "futari-abm-backend",
+            "keyFile": "/srv/nagaya/keys/futari-abm-backend.production.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": null
+          }
+        },
+        {
+          "key": "frontend",
+          "container": "futari-abm-frontend",
+          "image": "ghcr.io/thedumebi/futari-abm-frontend",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "production",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "futari-nihongo",
+      "app": "futari",
+      "site": "nihongo",
+      "variant": "prod",
+      "repo": "thedumebi/nihongo.futari",
+      "compose": "generated/compose/futari-nihongo.yml",
+      "network": "futari-nihongo",
+      "ownsNetwork": true,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres",
+            "dmb-postgres"
+          ]
+        },
+        {
+          "container": "redis-futari",
+          "aliases": [
+            "redis",
+            "dmb-redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "nihongo",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-futari",
+        "passwordEnv": null
+      },
+      "services": [
+        {
+          "key": "backend",
+          "container": "futari-nihongo-backend",
+          "image": "ghcr.io/thedumebi/futari-nihongo-backend",
+          "port": 3008,
+          "health": "/healthcheck",
+          "nodeEnv": "production",
+          "dotenvx": {
+            "path": "/app/nihongo/backend/.env.production",
+            "keyName": "futari-nihongo-backend",
+            "keyFile": "/srv/nagaya/keys/futari-nihongo-backend.production.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": null
+          }
+        },
+        {
+          "key": "frontend",
+          "container": "futari-nihongo-frontend",
+          "image": "ghcr.io/thedumebi/futari-nihongo-frontend",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "production",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "ofuma-main",
+      "app": "ofuma",
+      "site": "main",
+      "variant": "prod",
+      "repo": "thedumebi/ofuma.ai",
+      "compose": "generated/compose/ofuma-main.yml",
+      "network": "ofuma-main",
+      "ownsNetwork": true,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres"
+          ]
+        },
+        {
+          "container": "redis-ofuma",
+          "aliases": [
+            "redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "ofuma",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-ofuma",
+        "passwordEnv": "REDIS_PASSWORD_OFUMA"
+      },
+      "services": [
+        {
+          "key": "backend",
+          "container": "ofuma-main-backend",
+          "image": "ghcr.io/thedumebi/ofuma-main-backend",
+          "port": 3004,
+          "health": "/healthcheck",
+          "nodeEnv": "production",
+          "dotenvx": {
+            "path": "/app/.env.production",
+            "keyName": "ofuma-main-backend",
+            "keyFile": "/srv/nagaya/keys/ofuma-main-backend.production.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": "REDIS_PASSWORD"
+          }
+        },
+        {
+          "key": "frontend",
+          "container": "ofuma-main-frontend",
+          "image": "ghcr.io/thedumebi/ofuma-main-frontend",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "production",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "ofuma-main-stg",
+      "app": "ofuma",
+      "site": "main",
+      "variant": "stg",
+      "repo": "thedumebi/ofuma.ai",
+      "compose": "generated/compose/ofuma-main-stg.yml",
+      "network": "ofuma-main-stg",
+      "ownsNetwork": true,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres"
+          ]
+        },
+        {
+          "container": "redis-ofuma",
+          "aliases": [
+            "redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "ofuma_stg",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-ofuma",
+        "passwordEnv": "REDIS_PASSWORD_OFUMA"
+      },
+      "services": [
+        {
+          "key": "backend",
+          "container": "ofuma-main-stg-backend",
+          "image": "ghcr.io/thedumebi/ofuma-main-backend",
+          "port": 3004,
+          "health": "/healthcheck",
+          "nodeEnv": "staging",
+          "dotenvx": {
+            "path": "/app/.env.staging",
+            "keyName": "ofuma-main-backend",
+            "keyFile": "/srv/nagaya/keys/ofuma-main-backend.staging.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": "REDIS_PASSWORD"
+          }
+        },
+        {
+          "key": "frontend",
+          "container": "ofuma-main-stg-frontend",
+          "image": "ghcr.io/thedumebi/ofuma-main-frontend",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "staging",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "ofuma-doca",
+      "app": "ofuma",
+      "site": "doca",
+      "variant": "prod",
+      "repo": "thedumebi/ofuma.ai",
+      "compose": "generated/compose/ofuma-doca.yml",
+      "network": "ofuma-main",
+      "ownsNetwork": false,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres"
+          ]
+        },
+        {
+          "container": "redis-ofuma",
+          "aliases": [
+            "redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "ofuma",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-ofuma",
+        "passwordEnv": "REDIS_PASSWORD_OFUMA"
+      },
+      "services": [
+        {
+          "key": "doca-api",
+          "container": "ofuma-doca-doca-api",
+          "image": "ghcr.io/thedumebi/ofuma-doca-doca-api",
+          "port": 3010,
+          "health": "/healthcheck",
+          "nodeEnv": "production",
+          "dotenvx": {
+            "path": "/app/.env.production",
+            "keyName": "ofuma-doca-doca-api",
+            "keyFile": "/srv/nagaya/keys/ofuma-doca-doca-api.production.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": "REDIS_PASSWORD"
+          }
+        },
+        {
+          "key": "doca-web",
+          "container": "ofuma-doca-doca-web",
+          "image": "ghcr.io/thedumebi/ofuma-doca-doca-web",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "production",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    },
+    {
+      "id": "ofuma-doca-stg",
+      "app": "ofuma",
+      "site": "doca",
+      "variant": "stg",
+      "repo": "thedumebi/ofuma.ai",
+      "compose": "generated/compose/ofuma-doca-stg.yml",
+      "network": "ofuma-main-stg",
+      "ownsNetwork": false,
+      "attach": [
+        {
+          "container": "pg-main",
+          "aliases": [
+            "postgres"
+          ]
+        },
+        {
+          "container": "redis-ofuma",
+          "aliases": [
+            "redis"
+          ]
+        }
+      ],
+      "database": {
+        "name": "ofuma_stg",
+        "resource": "pg-main"
+      },
+      "redis": {
+        "resource": "redis-ofuma",
+        "passwordEnv": "REDIS_PASSWORD_OFUMA"
+      },
+      "services": [
+        {
+          "key": "doca-api",
+          "container": "ofuma-doca-stg-doca-api",
+          "image": "ghcr.io/thedumebi/ofuma-doca-doca-api",
+          "port": 3010,
+          "health": "/healthcheck",
+          "nodeEnv": "staging",
+          "dotenvx": {
+            "path": "/app/.env.staging",
+            "keyName": "ofuma-doca-doca-api",
+            "keyFile": "/srv/nagaya/keys/ofuma-doca-doca-api.staging.key"
+          },
+          "credentials": {
+            "pgUser": "PG_USERNAME",
+            "pgPassword": "PG_PASSWORD",
+            "pgDatabase": "PG_DATABASE",
+            "redisPassword": "REDIS_PASSWORD"
+          }
+        },
+        {
+          "key": "doca-web",
+          "container": "ofuma-doca-stg-doca-web",
+          "image": "ghcr.io/thedumebi/ofuma-doca-doca-web",
+          "port": 8080,
+          "health": null,
+          "nodeEnv": "staging",
+          "dotenvx": null,
+          "credentials": null
+        }
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "host": "futari.live",
+      "project": null,
+      "variant": "prod",
+      "kind": "static"
+    },
+    {
+      "host": "www.futari.live",
+      "project": null,
+      "variant": "prod",
+      "kind": "redirect"
+    },
+    {
+      "host": "dmb.futari.live",
+      "project": "futari-dmb",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "abm.futari.live",
+      "project": "futari-abm",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "nihongo.futari.live",
+      "project": "futari-nihongo",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "ofuma.ai",
+      "project": "ofuma-main",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "api.ofuma.ai",
+      "project": "ofuma-main",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "www.ofuma.ai",
+      "project": null,
+      "variant": "prod",
+      "kind": "redirect"
+    },
+    {
+      "host": "stg.ofuma.ai",
+      "project": "ofuma-main-stg",
+      "variant": "stg",
+      "kind": "proxy"
+    },
+    {
+      "host": "api-stg.ofuma.ai",
+      "project": "ofuma-main-stg",
+      "variant": "stg",
+      "kind": "proxy"
+    },
+    {
+      "host": "doca.ofuma.ai",
+      "project": "ofuma-doca",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "api-doca.ofuma.ai",
+      "project": "ofuma-doca",
+      "variant": "prod",
+      "kind": "proxy"
+    },
+    {
+      "host": "doca-stg.ofuma.ai",
+      "project": "ofuma-doca-stg",
+      "variant": "stg",
+      "kind": "proxy"
+    },
+    {
+      "host": "api-doca-stg.ofuma.ai",
+      "project": "ofuma-doca-stg",
+      "variant": "stg",
+      "kind": "proxy"
+    }
+  ],
+  "crons": [
+    {
+      "id": "futari-nihongo-reminders",
+      "at": "*/15 * * * *",
+      "container": "futari-nihongo-backend",
+      "port": 3008,
+      "path": "/notifications/run-reminders",
+      "secretHeader": {
+        "name": "x-cron-secret",
+        "env": "NIHONGO_CRON_SECRET"
+      }
+    }
+  ],
+  "alerts": {
+    "to": [
+      "chiwuzohdaniel@gmail.com"
+    ],
+    "from": "nagaya@futari.live",
+    "every": "*/5 * * * *",
+    "repeatHours": 6,
+    "thresholds": {
+      "memAvailableMb": 400,
+      "swapPagesPerSec": 100,
+      "psiSomeAvg300": 10,
+      "diskUsedPct": 85
+    }
+  },
+  "backups": {
+    "databases": [
+      {
+        "name": "dmb",
+        "resource": "pg-main",
+        "bucket": "dmb-backups"
+      },
+      {
+        "name": "abm",
+        "resource": "pg-main",
+        "bucket": "dmb-backups"
+      },
+      {
+        "name": "nihongo",
+        "resource": "pg-main",
+        "bucket": "dmb-backups"
+      },
+      {
+        "name": "ofuma",
+        "resource": "pg-main",
+        "bucket": "ofuma-backups"
+      },
+      {
+        "name": "ofuma_stg",
+        "resource": "pg-main",
+        "bucket": "ofuma-backups"
+      }
+    ]
+  }
+}

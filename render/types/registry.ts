@@ -57,6 +57,7 @@ export const postgresConfigSchema = z.object({
 export type PostgresConfig = z.infer<typeof postgresConfigSchema>
 
 export const redisConfigSchema = z.object({
+  version: z.number().int().min(7), // major version: the image is redis:<version>-alpine
   password_env: envKeySchema.optional(), // a key in nagaya's own .env.production
   policy: z.enum(['noeviction', 'allkeys-lru']).optional(),
   mem: memorySchema,
@@ -99,6 +100,9 @@ export const serviceConfigSchema = z.object({
   health: z.string().startsWith('/').optional(),
   mounts: z.array(nameSchema).optional(),
   aliases: z.array(nameSchema).optional(),
+  // Other services of the SAME site to start first, e.g. a frontend whose nginx
+  // proxies to its backend and fails to start if that hostname does not exist yet.
+  depends_on: z.array(nameSchema).optional(),
   // Path INSIDE the image of the dotenvx-encrypted env file the app decrypts
   // itself. Setting it injects the matching DOTENV_PRIVATE_KEY_* (NODE_ENV is
   // set on every container regardless).

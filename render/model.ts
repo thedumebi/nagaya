@@ -192,6 +192,7 @@ export function buildModel(registry: Registry): Model {
           database,
           redis,
           isPublic: routedServiceKeys.has(serviceKey),
+          siteServiceKeys: Object.keys(site.services!),
         }))
 
         const crons: Cron[] = isStaging
@@ -310,7 +311,9 @@ function buildService(input: BuildServiceInput): Service {
     dotenvx = {
       path: isStaging ? serviceConfig.dotenvx.replace(/\.env\.production$/, '.env.staging') : serviceConfig.dotenvx,
       keyName,
-      keyFile: `${ROOT}/keys/${keyName}.${nodeEnv}.env`,
+      // Holds ONLY DOTENV_PRIVATE_KEY_<ENV>=… (KEY=VALUE format, which is what
+      // compose's env_file reads). Not an env file of the app's settings.
+      keyFile: `${ROOT}/keys/${keyName}.${nodeEnv}.key`,
     }
   }
 
@@ -327,6 +330,12 @@ function buildService(input: BuildServiceInput): Service {
     }
   }
 
+  const dependsOn = serviceConfig.depends_on ?? []
+  for (const dependency of dependsOn) {
+    if (dependency === serviceKey || !input.siteServiceKeys.includes(dependency))
+      fail(location, `services.${serviceKey}.depends_on: "${dependency}" is not another service of this site`)
+  }
+
   const mounts = (serviceConfig.mounts ?? []).map(mountName =>
     registry.resources.mounts[mountName]
     ?? fail(location, `services.${serviceKey}.mounts: ${mountName} is not defined under resources.mounts`))
@@ -341,6 +350,7 @@ function buildService(input: BuildServiceInput): Service {
     health: serviceConfig.health ?? null,
     mounts,
     aliases: [serviceKey, ...(serviceConfig.aliases ?? [])],
+    dependsOn,
     public: input.isPublic,
     nodeEnv,
     dotenvx,

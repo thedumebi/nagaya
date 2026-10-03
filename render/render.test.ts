@@ -40,7 +40,7 @@ test('staging copies get their own database, env file, key and hostnames', () =>
   assert.equal(stagingProject.database?.name, 'ofuma_stg')
   assert.equal(backend.dotenvx?.path, '/app/.env.staging')
   assert.equal(backend.nodeEnv, 'staging')
-  assert.match(backend.dotenvx!.keyFile, /ofuma-main-backend\.staging\.env$/)
+  assert.match(backend.dotenvx!.keyFile, /ofuma-main-backend\.staging\.key$/)
   const stagingHosts = model.routes.filter(route => route.variant === 'stg').map(route => route.host)
   assert.deepEqual(stagingHosts, ['stg.ofuma.ai', 'api-stg.ofuma.ai', 'doca-stg.ofuma.ai', 'api-doca-stg.ofuma.ai'])
 })
@@ -129,4 +129,24 @@ test('alerts.to may be one inbox or a list', () => {
   assert.deepEqual(planFor(SITES_YAML).alerts.to, ['chiwuzohdaniel@gmail.com'])
   const twoInboxes = SITES_YAML.replace('  to: chiwuzohdaniel@gmail.com ', '  to: [chiwuzohdaniel@gmail.com, b@example.com] ')
   assert.deepEqual(planFor(twoInboxes).alerts.to, ['chiwuzohdaniel@gmail.com', 'b@example.com'])
+})
+
+test('a frontend starts after the backend its nginx proxies to', () => {
+  const files = renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES)
+  assert.match(files.get('generated/compose/futari-dmb.yml')!, /frontend:[\s\S]*depends_on:\n\s+- backend/)
+  assert.match(files.get('generated/compose/ofuma-doca.yml')!, /doca-web:[\s\S]*depends_on:\n\s+- doca-api/)
+})
+
+test('depends_on must name another service of the same site', () => {
+  assert.throws(loadEdited(sitesYaml => sitesYaml.replace('depends_on: [doca-api]', 'depends_on: [backend]')), /not another service of this site/)
+})
+
+test('redis runs the major version sites.yaml names', () => {
+  assert.match(renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES).get('generated/compose/core.yml')!, /image: redis:8-alpine/)
+})
+
+test('plan.json keys are all camelCase', () => {
+  const planText = renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES).get('generated/plan.json')!
+  const snakeKeys = [...planText.matchAll(/"([a-z]+_[a-z0-9_]+)":/g)].map(found => found[1])
+  assert.deepEqual(snakeKeys, [])
 })

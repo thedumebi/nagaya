@@ -105,7 +105,7 @@ export function renderCore(model: Model): string {
     if (redisConfig.password_env)
       command.push('--requirepass', `\${${redisConfig.password_env}:?run through dotenvx (nagaya does this)}`)
     services[redisName] = {
-      image: 'redis:7-alpine',
+      image: `redis:${redisConfig.version}-alpine`,
       container_name: redisName,
       restart: 'unless-stopped',
       command,
@@ -138,6 +138,12 @@ export function renderProject(project: Project): string {
     }
     if (service.command)
       composeService.command = ['sh', '-c', service.command]
+    // Start order within this project only. Postgres and Redis live in the
+    // core project, which compose cannot reference; `nagaya apply` starts and
+    // waits for them before any project, and a backend that still loses the
+    // race exits on its failed migration and is restarted by Docker.
+    if (service.dependsOn.length)
+      composeService.depends_on = service.dependsOn
     // The only value nagaya passes: which environment this is. Everything
     // else an app needs comes from the files baked into its own image.
     composeService.environment = { NODE_ENV: service.nodeEnv }

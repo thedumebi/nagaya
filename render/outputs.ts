@@ -143,7 +143,7 @@ export function renderPlan(model: Model): string {
     resources: {
       postgres: Object.keys(model.registry.resources.postgres),
       redis: Object.entries(model.registry.resources.redis)
-        .map(([redisName, redisConfig]) => ({ name: redisName, password_env: redisConfig.password_env ?? null })),
+        .map(([redisName, redisConfig]) => ({ name: redisName, passwordEnv: redisConfig.password_env ?? null })),
     },
     projects: model.projects.map(project => ({
       id: project.id,
@@ -153,7 +153,7 @@ export function renderPlan(model: Model): string {
       repo: project.repo,
       compose: `generated/compose/${project.id}.yml`,
       network: project.network,
-      owns_network: project.ownsNetwork,
+      ownsNetwork: project.ownsNetwork,
       attach: project.attachments,
       database: project.database,
       redis: project.redis,
@@ -172,7 +172,18 @@ export function renderPlan(model: Model): string {
     crons: model.projects.flatMap(project => project.crons),
     // `to` is always a list here, whichever form sites.yaml used.
     alerts: model.registry.alerts
-      ? { ...model.registry.alerts, to: [model.registry.alerts.to].flat() }
+      ? {
+          to: [model.registry.alerts.to].flat(),
+          from: model.registry.alerts.from,
+          every: model.registry.alerts.every,
+          repeatHours: model.registry.alerts.repeat_hours,
+          thresholds: {
+            memAvailableMb: model.registry.alerts.thresholds.mem_available_mb,
+            swapPagesPerSec: model.registry.alerts.thresholds.swap_pages_per_sec,
+            psiSomeAvg300: model.registry.alerts.thresholds.psi_some_avg300,
+            diskUsedPct: model.registry.alerts.thresholds.disk_used_pct,
+          },
+        }
       : null,
     backups: {
       databases: model.databases.map(database => ({
