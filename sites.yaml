@@ -1,0 +1,247 @@
+# nagaya — the site registry.
+#
+# Everything that runs on the nagaya box, and every DNS record in its zones, is
+# declared here. `pnpm render` turns this file into generated/ (Caddyfile,
+# compose files, crontab, Terraform variables); merging to master applies it.
+#
+# Full reference: docs/sites-yaml.md. Read that before adding a new kind of
+# thing; adding another site shaped like an existing one is copy-and-edit.
+
+# Where images live. Each service's image is <registry>/<app>-<site>-<service>.
+registry: ghcr.io/thedumebi
+
+# Machines that DNS records can point at. A site's records follow its origin,
+# so moving a site between boxes is a one-word change. `proxied: false` keeps
+# the record grey-clouded, which is how the Hetzner boxes keep working exactly
+# as they do today (their own Caddy, their own Let's Encrypt certs) until a
+# site is cut over. Remove the hetzner-* entries in DEPLOY.md Phase 9.
+origins:
+  nagaya:            { ip: 152.53.205.203, proxied: true }        # fill in at DEPLOY.md §2.1 step 5
+  hetzner-dmb:       { ip: 138.199.195.21, proxied: false }
+  hetzner-ofuma:     { ip: 91.99.67.183,   proxied: false }
+  hetzner-ofuma-stg: { ip: 46.225.127.236, proxied: false }
+
+# ─────────────── Resources: defined once, referenced by name ───────────────
+resources:
+  postgres:
+    pg-main:
+      version: 18
+      shared_buffers: 256MB
+      max_connections: 100
+      mem: 768m
+
+  redis:
+    redis-futari:                          # rate-limit counters for the futari sites
+      mem: 128m
+    redis-ofuma:                           # BullMQ queues: must never evict
+      password_env: REDIS_PASSWORD_OFUMA   # key in nagaya's own .env.production
+      policy: noeviction
+      mem: 256m
+
+  mounts:
+    futari-geo:
+      host: /srv/shared/futari
+      at: /opt/futari                      # mount the PARENT: geolite2-redist renames across it (EXDEV)
+
+backups:
+  at: "0 3 * * *"                          # UTC; one job dumps every database below
+  buckets:
+    futari: dmb-backups
+    ofuma: ofuma-backups
+
+# ─────────────── Box health alerts ───────────────
+# ONE block for the whole box, not a list of alerts. Each run of `nagaya
+# alerts` (on the `every` schedule) checks ALL the thresholds below, plus OOM
+# kills, which are always on. If any check fails, it sends ONE email, via
+# Brevo, listing every failing check.
+#
+# You get an email when a problem starts, a reminder every `repeat_hours`
+# while it lasts, and a final email when it clears.
+#
+#   More recipients  → make `to` a list.
+#   Different limits → change the numbers under `thresholds`.
+#   A new kind of check (e.g. a container that keeps restarting) → add a
+#   threshold here AND its check in cmd_alerts in bin/nagaya.
+#
+# DEPLOY.md "Day-2 → Memory" explains each number and what to do when one fires.
+alerts:
+  to: chiwuzohdaniel@gmail.com           # one inbox, or a list: [a@x.com, b@y.com]
+  from: nagaya@futari.live               # must be on a Brevo-authenticated domain (futari.live is)
+  every: "*/5 * * * *"                   # cron schedule for the checks
+  repeat_hours: 6                        # re-send while a problem lasts, at most this often
+  thresholds:
+    mem_available_mb: 400                # alert when available memory drops below 400 MB
+    swap_pages_per_sec: 100              # alert at 100 pages/s swapped in+out (1 page = 4 KB, so ~400 KB/s), averaged since the last run
+    psi_some_avg300: 10                  # alert when processes waited on memory >10% of the last 5 min
+    disk_used_pct: 85                    # alert when the root disk is 85% full
+
+# ─────────────── Apps: one per domain; sites are the subdomains under it ───────────────
+apps:
+  futari:
+    domain: futari.live
+    defaults:
+      origin: hetzner-dmb
+      postgres: { use: pg-main, as: [postgres, dmb-postgres] }   # dmb says postgres, abm/nihongo say dmb-postgres
+      redis:    { use: redis-futari, as: [redis, dmb-redis] }
+
+    email:
+      mode: namecheap                      # namecheap → cloudflare-pending → cloudflare (DEPLOY.md Phase 4)
+      forward_to: chiwuzohdaniel@gmail.com # the default inbox
+      addresses:
+        - admissions                       # a plain name → forward_to
+        - hello
+        - dmb
+        - { address: abm, forward_to: tamiloreallen@gmail.com }   # an object → its own inbox
+      # Mail to any @futari.live address NOT listed above (typos, made-up names):
+      #   true             → send it to forward_to
+      #   someone@mail.com → send it to that inbox instead
+      #   false            → reject it (the sender gets a bounce)
+      catch_all: true
+
+    dns:                                   # records that are not sites
+      - { type: TXT,   name: "@",               content: "brevo-code:62e1beaf74d1c667fbd94fb569524f7f" }
+      - { type: CNAME, name: brevo1._domainkey, content: b1.futari-live.dkim.brevo.com }
+      - { type: CNAME, name: brevo2._domainkey, content: b2.futari-live.dkim.brevo.com }
+      - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
+
+    sites:
+      root:
+        static: futari                     # static/futari, served by Caddy itself
+        routes: { "@": static }            # futari.live
+        www: redirect                      # www.futari.live → futari.live
+
+      dmb:
+        repo: thedumebi/dmb.futari
+        database: dmb
+        services:
+          backend:
+            port: 3006
+            mem: 384m
+            command: >-
+              DB_MIGRATING=true node dist/db/migrate.js &&
+              DB_SEEDING=true node dist/db/seed.js &&
+              exec node dist/index.js
+            health: /healthcheck
+            mounts: [futari-geo]
+            dotenvx: /app/dmb/backend/.env.production
+          frontend:
+            port: 8080
+            mem: 64m
+        routes: { dmb: frontend:8080 }     # dmb.futari.live
+
+      abm:
+        repo: thedumebi/abm.futari
+        database: abm
+        services:
+          backend:
+            port: 3006
+            mem: 384m
+            aliases: [abm-backend]         # abm/frontend/nginx.conf proxies to abm-backend:3006
+            command: >-
+              DB_MIGRATING=true node dist/db/migrate.js &&
+              DB_SEEDING=true node dist/db/seed.js &&
+              exec node dist/index.js
+            health: /healthcheck
+            mounts: [futari-geo]
+            dotenvx: /app/abm/backend/.env.production
+          frontend:
+            port: 8080
+            mem: 64m
+        routes: { abm: frontend:8080 }
+
+      nihongo:
+        repo: thedumebi/nihongo.futari
+        database: nihongo
+        services:
+          backend:
+            port: 3008
+            mem: 384m
+            aliases: [nihongo-backend]     # nihongo/frontend/nginx.conf proxies to nihongo-backend:3008
+            command: >-
+              DB_MIGRATING=true node dist/db/migrate.js &&
+              DB_SEEDING=true node dist/db/seed.js &&
+              exec node dist/index.js
+            health: /healthcheck
+            mounts: [futari-geo]
+            dotenvx: /app/nihongo/backend/.env.production
+          frontend:
+            port: 8080
+            mem: 64m
+        routes: { nihongo: frontend:8080 }
+        cron:
+          - name: reminders
+            at: "*/15 * * * *"
+            service: backend
+            post: /notifications/run-reminders
+            secret_header: { name: x-cron-secret, env: NIHONGO_CRON_SECRET }   # key in nagaya's .env.production
+
+  ofuma:
+    domain: ofuma.ai
+    defaults:
+      origin: hetzner-ofuma
+      stg_origin: hetzner-ofuma-stg
+      postgres: pg-main
+      database: ofuma                      # main + doca share one database, as today
+      redis: redis-ofuma
+      stg: true                            # every ofuma site gets a staging copy, off by default
+
+    email:
+      mode: namecheap
+      forward_to: chiwuzohdumebi@gmail.com
+      addresses: [hi, sales, support, security, privacy, legal]
+      catch_all: true                      # unlisted @ofuma.ai mail → forward_to (options: see futari above)
+
+    dns:
+      - { type: TXT,   name: "@",               content: "brevo-code:3d18e04bb17f60d6b7c14d532b5adf13" }
+      - { type: CNAME, name: brevo1._domainkey, content: b1.ofuma-ai.dkim.brevo.com }
+      - { type: CNAME, name: brevo2._domainkey, content: b2.ofuma-ai.dkim.brevo.com }
+      - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
+      # Old staging names, kept so nothing breaks at the nameserver switch.
+      # Delete in DEPLOY.md Phase 9 together with the Hetzner staging box.
+      - { type: A, name: doca.stg,     content: 46.225.127.236 }
+      - { type: A, name: api-doca.stg, content: 46.225.127.236 }
+      - { type: A, name: piston.stg,   content: 46.225.127.236 }   # PM-Interview-Bank calls this
+
+    sites:
+      main:
+        repo: thedumebi/ofuma.ai
+        services:
+          backend:
+            port: 3004
+            mem: 768m                      # was 1200m on Hetzner; tune after a week of docker stats
+            command: >-
+              DB_MIGRATING=true node ofuma/backend/dist/db/migrate.js &&
+              exec node ofuma/backend/dist/index.js
+            health: /healthcheck
+            dotenvx: /app/.env.production
+          frontend:                        # reads its .env.<NODE_ENV> from the image (DEPLOY.md §1.5)
+            port: 8080
+            mem: 64m
+        routes:
+          "@": frontend:8080               # ofuma.ai      │ stg → stg.ofuma.ai
+          api: backend:3004                # api.ofuma.ai  │ stg → api-stg.ofuma.ai
+        www: redirect
+
+      doca:
+        repo: thedumebi/ofuma.ai
+        network: main                      # doca-api calls http://backend:3004 (OFUMA_INTERNAL_API_URL)
+        services:
+          doca-api:
+            port: 3010
+            mem: 256m
+            command: >-
+              node doca/api/dist/db/migrate.js &&
+              exec node doca/api/dist/index.js
+            health: /healthcheck
+            dotenvx: /app/.env.production
+            credentials:                   # doca's env uses DOCA_-prefixed names
+              pg_user: DOCA_PG_USERNAME
+              pg_password: DOCA_PG_PASSWORD
+              pg_database: DOCA_PG_DATABASE
+              redis_password: DOCA_REDIS_PASSWORD
+          doca-web:                        # reads its .env.<NODE_ENV> from the image (DEPLOY.md §1.5)
+            port: 8080
+            mem: 64m
+        routes:
+          doca: doca-web:8080              # doca.ofuma.ai      │ stg → doca-stg.ofuma.ai
+          api-doca: doca-api:3010          # api-doca.ofuma.ai  │ stg → api-doca-stg.ofuma.ai
