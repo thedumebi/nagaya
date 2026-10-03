@@ -28,6 +28,7 @@ resources:
       version: 18
       shared_buffers: 256MB
       max_connections: 100
+      tunnel_port: 5432                    # on the box's 127.0.0.1 only, for an SSH tunnel from the laptop
       mem: 768m
 
   redis:
