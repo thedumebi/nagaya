@@ -1,0 +1,16 @@
+node_modules/
+
+# Secrets and runtime state. On the box, /srv/nagaya is this checkout, and
+# these live inside it, so they must never be committed.
+.env.keys
+.env
+keys/
+certs/
+state/
+logs/
+
+# Terraform: providers and any local state. The lock file IS committed.
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
