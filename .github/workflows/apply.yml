@@ -45,6 +45,8 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
     steps:
+      # First, so the job's working directory (terraform/) exists.
+      - uses: actions/checkout@v7
       # Until RUNBOOK.md §4.4 adds these secrets there is nothing to apply
       # with: skip, green, instead of failing every push.
       - name: Terraform secrets present?
@@ -56,8 +58,6 @@ jobs:
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.secrets.outputs.ready == 'true'
-        uses: actions/checkout@v7
       - if: steps.secrets.outputs.ready == 'true'
         uses: hashicorp/setup-terraform@v4
         with:
