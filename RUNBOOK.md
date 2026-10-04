@@ -657,10 +657,15 @@ sshd -T | grep -iE '^(passwordauthentication|permitrootlogin)'
 
 💻 **LAPTOP** — **before closing the root session**, prove the deploy user works from a second terminal:
 ```bash
-ssh nagaya 'echo login-ok && sudo true && echo sudo-ok'
+ssh -t nagaya 'echo login-ok && sudo true && echo sudo-ok'
 ```
-(`sudo true` prompts for the password you gave `adduser`. Do not use `sudo -n`:
-nothing grants passwordless sudo, so it would fail even though sudo works.)
+(`sudo true` prompts for the password you gave `adduser`. **`-t` is needed:**
+ssh with a command gives it no terminal, and without one sudo cannot ask for
+the password, so it fails with "a terminal is required" even though sudo
+works. Do not use `sudo -n` either: nothing grants passwordless sudo.)
+
+`nagaya` here is the `Host nagaya` entry from §2.3, so you never type
+`deploy@152.53.205.203`. It works for `ssh`, `scp` and `rsync` alike.
 
 **2.7** 🖥️ **SERVER (as `deploy`)** — Docker, its daemon config, dotenvx:
 ```bash
