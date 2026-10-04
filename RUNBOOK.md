@@ -513,6 +513,13 @@ images: repo → **Actions** → **Deploy (nagaya)** → **Run workflow** → br
 profile → **Packages**. Expect `futari-dmb-backend`, `futari-dmb-frontend`,
 and so on, each **Private** and linked to its repo.
 
+> **nihongo's two packages are Public**, and that is expected: a package
+> pushed from a workflow takes its repo's visibility, and `nihongo.futari` is
+> a public repo. The image holds nothing the repo does not already publish
+> (the code and the same dotenvx-encrypted `.env.production`). nagaya pulls
+> every image with its token either way. Checked 2026-10-04: the other eight
+> refuse an anonymous pull.
+
 > ⚠️ **If a build fails with `denied: permission_denied: write_package`:** the
 > package already existed (from a manual push) and is not linked to this repo.
 > Package → **Package settings** → **Manage Actions access** → **Add
