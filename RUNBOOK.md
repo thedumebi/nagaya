@@ -1498,6 +1498,12 @@ command spelled out; the later sections give only what differs.
 **Run workflow** → `master`, *Deploy after building* **unticked**. When it is
 green, copy the commit SHA from the run's summary. That is `<sha>`.
 
+> Its last job, **Deploy to nagaya**, shows *skipped*: right, because the box
+> was unticked. The cutover starts the app by hand at (g), after the restore;
+> a deploy from GitHub now would start it against an empty database.
+> **Skip the run altogether** if the latest green *Deploy (nagaya)* run is
+> already on the current `master` commit: its SHA is `<sha>`.
+
 **b.** 🖥️ **SERVER nagaya (as `deploy`)**:
 ```bash
 nagaya prepare futari-nihongo <sha>
