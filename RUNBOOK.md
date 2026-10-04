@@ -2110,12 +2110,35 @@ tail -f /srv/nagaya/logs/alerts-memory.log  # one line every 5 minutes: the numb
 
 ### Connect a database client (TablePlus etc.)
 
-Postgres listens on the box's loopback only. Tunnel to it:
+Postgres listens on the box's loopback only (`127.0.0.1:5432`), never on the
+internet. Every client reaches it through SSH; TablePlus can do that for you,
+so it is one saved connection and one click, as with Nooklet and the old dmb
+box.
+
+**TablePlus (recommended).** New connection → **PostgreSQL**, and turn on
+**Over SSH**:
+
+| | Field | Value |
+|---|---|---|
+| **SSH** | Server | `152.53.205.203` |
+| | Port | `22` |
+| | User | `deploy` |
+| | Use SSH key | `~/.ssh/nagaya_admin` |
+| **Database** | Host | `127.0.0.1` |
+| | Port | `5432` |
+| | User / Password | the **app's role** from its env file: `thedumebi` for dmb/abm/nihongo, `ofuma` for ofuma, `ofuma_stg` for staging |
+| | Database | `dmb`, `abm`, `nihongo`, `ofuma`, `ofuma_stg` |
+
+Save one connection per database (or per role). The superuser `postgres` works
+the same way, with `PG_SUPERUSER_PASSWORD` from nagaya's `.env.production`;
+use it only when you mean to.
+
+**Any other client, or psql on the laptop:** open the tunnel yourself, then
+connect to `localhost:5433` with the same role, password and database:
 ```bash
 ssh -N -L 5433:127.0.0.1:5432 nagaya     # 💻 leave running
+psql "postgresql://thedumebi@localhost:5433/dmb"
 ```
-Then connect to `localhost:5433` as the **app's role** for its database, for
-example `thedumebi` for dmb/abm/nihongo or `ofuma` for ofuma.
 
 **Each database admits only its own role.** On every deploy, `nagaya` runs
 `REVOKE CONNECT … FROM PUBLIC` and `GRANT CONNECT … TO <owner>` for the
@@ -2133,10 +2156,11 @@ SELECT datname, pg_get_userbyid(datdba) AS owner, datacl FROM pg_database ORDER 
 ```
 dmb, abm and nihongo all use the role `thedumebi`, so that one role can open
 all three of its databases. Give each its own `PG_USERNAME`/`PG_PASSWORD` in
-its env file to separate them. Use the
-superuser `postgres` only when you mean to. TablePlus's own **Over SSH** option
-does the same: SSH host `152.53.205.203`, user `deploy`, key `~/.ssh/nagaya_admin`,
-then database host `127.0.0.1:5432`.
+its env file to separate them.
+
+> **Don't publish 5432 to the internet** to skip SSH. It would open the
+> database to the whole internet's password guessing, and Docker-published
+> ports go around ufw. The SSH login is key-only and already guarded.
 
 ### Memory: is the box short?
 
