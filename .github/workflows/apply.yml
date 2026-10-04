@@ -45,12 +45,27 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: hashicorp/setup-terraform@v4
+      # Until RUNBOOK.md §4.4 adds these secrets there is nothing to apply
+      # with: skip, green, instead of failing every push.
+      - name: Terraform secrets present?
+        id: secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::notice::Terraform secrets not set yet (RUNBOOK.md §4.4); skipping Terraform."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@v7
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.16.5
-      - run: terraform init -input=false -backend-config=backend.hcl
-      - run: terraform apply -input=false -auto-approve
+      - if: steps.secrets.outputs.ready == 'true'
+        run: terraform init -input=false -backend-config=backend.hcl
+      - if: steps.secrets.outputs.ready == 'true'
+        run: terraform apply -input=false -auto-approve
 
   box:
     name: nagaya apply
@@ -60,9 +75,16 @@ jobs:
       HOST: ${{ secrets.NAGAYA_HOST }}
       KNOWN_HOSTS: ${{ secrets.NAGAYA_KNOWN_HOSTS }}
       SSH_KEY: ${{ secrets.NAGAYA_SSH_KEY }}
+      # Set to "true" by RUNBOOK.md §5.1, after the first `nagaya apply` was
+      # run by hand. Until then CI never touches the box.
+      BOX_READY: ${{ vars.NAGAYA_BOX_READY }}
     steps:
       - name: Run nagaya apply on the box
         run: |
+          if [ "$BOX_READY" != "true" ]; then
+            echo "::notice::Repo variable NAGAYA_BOX_READY is not \"true\" yet (RUNBOOK.md §5.1); skipping the box."
+            exit 0
+          fi
           if [ -z "$HOST" ] || [ -z "$SSH_KEY" ]; then
             echo "::notice::NAGAYA_HOST / NAGAYA_SSH_KEY not set yet (RUNBOOK.md §2.10); skipping the box."
             exit 0

@@ -995,13 +995,17 @@ ls -l      # two .key (-rw-------) and two .csr
 openssl req -in futari.live.csr -noout -text | grep -A1 'Subject Alternative Name'
 # expect: DNS:futari.live, DNS:*.futari.live
 ```
-💻 **LAPTOP** — bring the CSRs into the repo for Terraform:
+💻 **LAPTOP** — bring the CSRs into the repo, into `pending/`:
 ```bash
 unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya
-scp 'nagaya:/srv/nagaya/certs/*.csr' terraform/csr/
-git add terraform/csr/*.csr && git commit -m "Origin CA CSRs" && git push
+scp 'nagaya:/srv/nagaya/certs/*.csr' terraform/csr/pending/
+git add terraform/csr/pending/*.csr && git commit -m "Origin CA CSRs" && git push
 ```
+> **Why `pending/`:** Terraform requests a certificate for every CSR directly
+> in `terraform/csr/`, and Cloudflare refuses (error 1010, "This zone is
+> either not part of your account…") until the zone is **active**, which
+> happens in §4.9. §4.11 moves them up a level once it is.
 
 **3.7** 🖥️ **SERVER (as `deploy`)** — pull nagaya's encrypted secrets, log in to GHCR, test the alert email:
 ```bash
@@ -1095,7 +1099,9 @@ AWS_ACCESS_KEY_ID=<4.3 access key id>
 AWS_SECRET_ACCESS_KEY=<4.3 secret>
 ENV
 ```
-The same four values become Actions secrets on the nagaya repo, for CI:
+The same four values become Actions secrets on the nagaya repo, for CI.
+**From here on, every push to `master` runs `terraform apply` in CI** (the
+Apply workflow), so the commit at the end of this step is the first apply:
 ```bash
 set -a; . ~/.config/nagaya/tf.env; set +a
 gh secret set CLOUDFLARE_API_TOKEN       -R thedumebi/nagaya -b "$CLOUDFLARE_API_TOKEN"
@@ -1112,18 +1118,25 @@ nagaya_known_hosts    = "152.53.205.203 ssh-ed25519 AAAA…"   # the ssh-keyscan
 ```
 and `terraform/backend.hcl`: replace `CHANGE_ME_ACCOUNT_ID`.
 
-### 4.5 💻 LAPTOP — first apply
+### 4.5 💻 LAPTOP + 🌐 — check the first apply
 
+Pushing §4.4's tfvars commit ran the **Apply** workflow (repo → Actions →
+Apply): Render check ✓, Terraform apply ✓, nagaya apply skipped (the box is
+not marked ready until §5.1). Then confirm from the laptop that Cloudflare and
+the state agree:
 ```bash
 unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya
-pnpm render                                  # tfvars must match sites.yaml
-set -a; . ~/.config/nagaya/tf.env; set +a
+set -a; . ~/.config/nagaya/tf.env; set +a    # or wherever you keep these four values
 cd terraform
 terraform init -backend-config=backend.hcl
-terraform plan -out=first.plan
+terraform plan                               # expect: No changes.
+terraform state list | sed -E 's/\[.*//' | sort | uniq -c
 ```
-**Read the plan before applying.** Expect roughly:
+The plan prints to the terminal. (If you save one with `-out=`, it is a binary
+file; read it with `terraform show <file>`. `*.plan` is git-ignored.)
+
+What the state should hold:
 
 Terraform is split into three modules (`terraform/main.tf` wires them):
 
@@ -1139,28 +1152,27 @@ Terraform is split into three modules (`terraform/main.tf` wires them):
 | `module.zone["…"].cloudflare_zone_setting.*` | 6: ssl strict, always_use_https, min_tls 1.2, per zone |
 | `module.zone["…"].cloudflare_dns_record.this["…"]` | every record: the site A records **with `proxied = false` and the Hetzner IPs**, the Brevo DKIM CNAMEs, the brevo-code and DMARC TXT, five eforward MX and an SPF per zone, and the three old staging names |
 | `module.zone["…"].cloudflare_ruleset.waf` | 2 |
-| `module.zone["…"].cloudflare_origin_ca_certificate.this[0]` | 2 (from the CSRs in §3.6) |
+| `module.zone["…"].cloudflare_origin_ca_certificate.this[0]` | **none yet**: they come in §4.11, once the zones are active |
 | `module.deploy_secrets[0].github_actions_secret.this["…"]` | 15: `NAGAYA_HOST` / `NAGAYA_USER` / `NAGAYA_KNOWN_HOSTS` on five repos |
 | email routing | **none yet**: both zones are `mode: namecheap` |
 
 ```bash
-terraform apply first.plan && rm first.plan
 terraform output nameservers
 ```
 Keep the nameserver output open: two names per zone, for example
 `ada.ns.cloudflare.com` and `rob.ns.cloudflare.com`. **They are specific to
 your account.**
 
-> ⚠️ **If the `cloudflare_origin_ca_certificate` fails with an authentication
-> error**, this token cannot issue Origin CA certificates (older accounts sometimes need the
+> ⚠️ **(For §4.11.) If the `cloudflare_origin_ca_certificate` fails with an
+> authentication error once the zone is active**, this token cannot issue Origin CA certificates (older accounts sometimes need the
 > separate "Origin CA Key"). Do it in the dashboard instead. The key still never
 > leaves the box:
 > 1. Zone → **SSL/TLS** → **Origin Server** → **Create Certificate**.
 > 2. Choose **Use my private key and CSR**, paste `terraform/csr/<domain>.csr`,
 >    and pick **15 years**.
 > 3. **Create**, then copy the certificate PEM for §4.11.
-> 4. Then delete that zone's CSR file from `terraform/csr/` so Terraform stops
->    trying, re-render, and apply again.
+> 4. Then move that zone's CSR back into `terraform/csr/pending/` so
+>    Terraform stops trying, and push.
 
 > The zones are now **pending**. A pending zone answers nothing to the
 > internet, because the world still asks Namecheap. Nothing has changed for
@@ -1321,6 +1333,16 @@ and 4.10.2 is already done.
 
 ### 4.11 💻 LAPTOP → 🖥️ — the origin certificates onto the box
 
+Only once **both** zones show `active` (§4.9). Move the CSRs out of
+`pending/`; the push makes CI request the two certificates:
+```bash
+unset -f cd pnpm node npm npx 2>/dev/null
+cd ~/Documents/projects/nagaya
+git mv terraform/csr/pending/*.csr terraform/csr/
+git commit -m "Origin CA certificates: zones are active" && git push
+```
+Wait for the Apply run to go green (Terraform apply: `2 added`), then fetch
+the certificates:
 ```bash
 unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya/terraform
@@ -1370,6 +1392,13 @@ What it does, in order:
 5. Validates and reloads the Caddyfile.
 6. Reports every project as "not deployed yet".
 7. Installs the crontab: backups, nihongo reminders, alerts.
+
+💻 **LAPTOP** — once 5.2 below passes, let CI run `nagaya apply` on every
+merge from now on:
+```bash
+gh variable set NAGAYA_BOX_READY --body true -R thedumebi/nagaya
+```
+Until this is set, the Apply workflow does Terraform only and skips the box.
 
 > ⚠️ **If Caddy keeps restarting**, look at `docker logs caddy`. Nine times in
 > ten a certificate or key is missing or unreadable in `/srv/nagaya/certs`

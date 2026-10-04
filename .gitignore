@@ -15,3 +15,6 @@ terraform/.terraform/
 *.tfstate.*
 crash.log
 .config
+
+# Saved Terraform plans can hold sensitive values.
+terraform/*.plan
