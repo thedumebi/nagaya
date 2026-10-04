@@ -270,7 +270,7 @@ gh auth login       # GitHub.com → HTTPS → login with a browser
 unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya
 pnpm install
-pnpm test && pnpm render:check     # expect: 11 tests pass, "generated/ matches sites.yaml"
+pnpm test && pnpm render:check     # expect: every test passes, "generated/ matches sites.yaml"
 ```
 
 ---
@@ -564,7 +564,7 @@ Merge it: PR into `stg`, then `stg` into `master` as usual. It is safe on
 Hetzner. The code and its env file change together in one commit, and Hetzner's
 compose never names doca's database keys itself.
 
-### 1.7 💻 LAPTOP — futari: the frontends read their runtime values from their own repo *(done; review and merge)*
+### 1.7 💻 LAPTOP — futari: the frontends read their runtime values from their own repo
 
 The same change as ofuma's §1.5, for dmb, abm and nihongo. It makes their
 frontends work like their backends:
@@ -572,14 +572,16 @@ frontends work like their backends:
 - the values live **in the app repo, per environment**;
 - **nagaya passes only `NODE_ENV`**.
 
-**Why it was needed.** Until now these three frontends had their API URL and
-title **baked in at build time** (`ARG VITE_API_URL` in the Dockerfile, set
-by the deploy workflow). A futari staging copy would have run the production
-image, and its staging frontend would have called the **production** API.
+**Why it is needed.** Today these frontends have their API URL and title
+**baked in at build time** (`ARG VITE_API_URL` in the Dockerfile). A futari
+staging copy would run the production image, and its staging frontend would
+call the **production** API. The nagaya deploy templates (§1.4) pass no build
+arguments, so **do this before a repo's first nagaya image build**.
 
-The change is on branch **`nagaya/frontend-runtime-env`** in each of the three
-repos, cut from `master`. Shown for dmb (abm and nihongo are the same, with
-`ABM_` / `NIHONGO_` prefixes):
+The change is already made, uncommitted, on branch
+**`nagaya/frontend-runtime-env`** in each of `dmb.futari`, `abm.futari` and
+`nihongo.futari` (cut from `master`). Each touches four files (shown for dmb;
+abm and nihongo use `ABM_` / `NIHONGO_`):
 
 | File | What it does |
 |---|---|
@@ -589,35 +591,53 @@ repos, cut from `master`. Shown for dmb (abm and nihongo are the same, with
 | `dmb/frontend/Dockerfile` | The build stage sets `VITE_API_URL=DMB_API_URL` and `VITE_APP_TITLE=DMB_APP_TITLE` (placeholders) instead of taking `ARG`s. The runner copies `env.sh` and `runtime-env/`, and gives the built files to uid 101 so the unprivileged nginx user can rewrite them |
 
 nihongo's title stays `go`, which is what its live `.env.production` sets
-today. Change `runtime-env/production.env` if that was never intended.
+today. Edit `runtime-env/production.env` before committing if that was never
+intended.
 
-**What was checked:**
-- **Build:** dmb's real frontend, built the way the Dockerfile builds it,
-  succeeds, and the output contains the placeholders (`DMB_API_URL`,
-  `DMB_APP_TITLE` ×5, including the `<title>` and Open Graph tags).
-- **`env.sh`:** run against that output, it fills in the staging values with
-  `NODE_ENV=staging` and keeps a value containing `&` and `|` intact.
+**Already checked** when the change was written (2026-10-04):
+- dmb's real frontend, built the way the Dockerfile builds it, succeeds, and
+  its output contains the placeholders (`DMB_API_URL`, `DMB_APP_TITLE` ×5,
+  including the `<title>` and Open Graph tags);
+- `env.sh`, run on that output, fills in the staging values with
+  `NODE_ENV=staging` and keeps a value containing `&` and `|` intact;
+- each branch was cut from that repo's `master` as of that day.
 
-**Not checked:** the container end to end (Docker was not running). Do this
-once per repo before merging:
+**1.7.1** 💻 **LAPTOP** — review, for each repo (shown for dmb):
 ```bash
 unset -f cd pnpm node npm npx 2>/dev/null
-cd ~/Documents/projects/dmb.futari && git checkout nagaya/frontend-runtime-env
+cd ~/Documents/projects/dmb.futari
+git switch nagaya/frontend-runtime-env
+git status --short
+#  M dmb/frontend/Dockerfile
+# ?? dmb/frontend/env.sh
+# ?? dmb/frontend/runtime-env/
+git diff dmb/frontend/Dockerfile
+cat dmb/frontend/env.sh dmb/frontend/runtime-env/*.env
+```
+> If `master` has moved on since 2026-10-04, bring the branch up to date
+> after committing (1.7.3): `git fetch && git rebase origin/master`.
+
+**1.7.2** 💻 **LAPTOP** — prove the container end to end (needs Docker running):
+```bash
 docker build --platform linux/amd64 -f dmb/frontend/Dockerfile -t dmb-fe:check .
 docker run --rm -d --name dmb-fe-check -e NODE_ENV=staging -p 8089:8080 dmb-fe:check
 docker logs dmb-fe-check | grep runtime-env      # loading /etc/app-env/staging.env, replaced 2 placeholder(s)
 curl -s localhost:8089 | grep -o '<title>[^<]*'  # <title>DMB [Staging]
-docker rm -f dmb-fe-check
+docker rm -f dmb-fe-check && docker rmi dmb-fe:check
 ```
 
-**It's safe on Hetzner before cutover:**
+**1.7.3** 💻 **LAPTOP** — commit and merge:
+```bash
+git add dmb/frontend/Dockerfile dmb/frontend/env.sh dmb/frontend/runtime-env
+git commit -m "Frontend reads its URL and title at start-up from runtime-env/<NODE_ENV>.env"
+git push -u origin nagaya/frontend-runtime-env     # PR into master, merge
+```
+
+**It's safe on Hetzner** before cutover:
 - Hetzner's compose still passes `VITE_API_URL` as a build argument; the
   Dockerfile no longer reads it, so Docker only warns that it's unused.
 - Hetzner's frontend container sets no `NODE_ENV`, so `env.sh` uses
   `production.env`, which holds exactly today's values.
-
-**Merge it into `master`** in each repo, before that repo's first nagaya image
-build (§1.4.1).
 
 ---
 
@@ -1972,7 +1992,7 @@ Keep the snapshots for a month, then delete them too.
 
 Render → PR → merge. Expect only deletions in the plan.
 
-**9.3** 💻 **The app repos**:
+**9.3** 💻 **The app repos**, and the leftovers in this one:
 - **dmb.futari:**
   - delete `Caddyfile` and the `futari/` directory (both live in nagaya now);
   - delete the `caddy`, `postgres` and `redis` services from `docker-compose.prod.yml`, or the whole file;
@@ -1991,6 +2011,10 @@ Render → PR → merge. Expect only deletions in the plan.
   `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, `DEPLOY_PORT`, and ofuma's `PROD_HOST` / `STG_HOST`.
 - **App env files:** the per-app R2 keys (`S3_*`, `AWS_*`) are unused now that
   nagaya runs backups. Remove them, then revoke the matching R2 tokens in Cloudflare.
+- **The migration branches:** once merged, delete
+  `nagaya/frontend-runtime-env` in `dmb.futari`, `abm.futari` and
+  `nihongo.futari`, and `nagaya/doca-standard-db-env` in the ofuma repo
+  (`git branch -d <branch>`, and on GitHub if you pushed them).
 
 **9.4** 🌐 **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them

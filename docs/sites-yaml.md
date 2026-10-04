@@ -8,7 +8,7 @@ You edit this file and merge it, and the rest follows:
 sites.yaml ──pnpm render──▶ generated/caddy/Caddyfile        Caddy: hostnames → containers
                             generated/compose/core.yml        Postgres, Redis, Caddy
                             generated/compose/<project>.yml   one per deployable project
-                            generated/crontab                 backups + scheduled calls
+                            generated/crontab                 backups, alert checks, site crons
                             generated/firewall.sh             firewall (Cloudflare-only 443)
                             generated/plan.json               what bin/nagaya reads
                             terraform/generated.auto.tfvars.json   DNS + email for Terraform
@@ -41,7 +41,7 @@ the file.
 | **resource** | Shared infrastructure, defined **once** at the top and referred to by name. | `pg-main`, `redis-futari`, `redis-ofuma`, `futari-geo` |
 | **app** | One **domain**. Groups its sites and gives them defaults. | `futari` (futari.live), `ofuma` (ofuma.ai) |
 | **site** | One **deployable unit** under an app: one repo, one CI pipeline, a set of containers, and the subdomains routed to them. | futari: `root`, `dmb`, `abm`, `nihongo`. ofuma: `main`, `doca` |
-| **service** | One **container** in a site: image, port, memory cap, start command, env. | `backend`, `frontend`, `doca-api`, `doca-web` |
+| **service** | One **container** in a site: image, port, memory cap, start command, health check, its encrypted env file. | `backend`, `frontend`, `doca-api`, `doca-web` |
 
 Two rules cover most of it:
 
@@ -70,14 +70,25 @@ Add one block under `apps.futari.sites`:
           backend:
             port: 3010
             mem: 256m
-            command: node dist/db/migrate.js && node dist/index.js
+            command: node dist/db/migrate.js && exec node dist/index.js
             health: /healthcheck
             dotenvx: /app/blog/backend/.env.production
           frontend:
             port: 8080
             mem: 64m
+            depends_on: [backend]
         routes: { blog: frontend:8080 }      # blog.futari.live
 ```
+
+The blog repo itself needs what every app here has:
+- **backend:** its encrypted `.env.production` baked into the image, with the
+  credentials under the standard names (`PG_USERNAME`, `PG_PASSWORD`,
+  `PG_DATABASE`);
+- **frontend:** built with placeholders and filled in at start-up from
+  `runtime-env/<NODE_ENV>.env`, as the futari frontends do (DEPLOY.md §1.7).
+  dmb's `frontend/env.sh`, `runtime-env/` and Dockerfile are the template;
+- **a deploy workflow** copied from `templates/app-repo/futari-dmb.yml` with
+  the names changed.
 
 Then:
 
@@ -96,7 +107,7 @@ What happens next:
   `ghcr.io/thedumebi/futari-blog-backend:<sha>` and the matching frontend, then
   runs `deploy futari-blog <sha>`. On that first deploy nagaya reads the
   database credentials out of the image's env file, creates the role and the
-  `blog` database, and starts the containers.
+  `blog` database (connectable only by that role), and starts the containers.
 
 Until the blog repo's first deploy, `blog.futari.live` gets a 502 from Caddy.
 `nagaya apply` reports the project as "not deployed yet".
@@ -125,7 +136,7 @@ at that machine's IP, proxied (orange cloud) or not according to `proxied`.
 
 ```yaml
 origins:
-  nagaya:      { ip: 159.195.x.x,    proxied: true }
+  nagaya:      { ip: 152.53.205.203, proxied: true }
   hetzner-dmb: { ip: 138.199.195.21, proxied: false }
 ```
 
@@ -264,7 +275,8 @@ One Postgres container, also named `<name>`, from `postgres:<version>-alpine`.
   owned by its app's own role (see [`database`](#database)).
 
 ### `redis.<name>`
-One Redis container named `<name>`, using `redis:7-alpine` with AOF persistence.
+One Redis container named `<name>`, using `redis:<version>-alpine` with AOF
+(append-only file) persistence, so its data survives a restart.
 
 | Key | Meaning |
 |---|---|
@@ -418,6 +430,12 @@ baked into its image:
    fails the deploy with a message saying which file to fix.
 3. It creates the role if missing, sets its password to the env's value, and
    creates the database owned by that role if missing.
+4. It makes the database **connectable only by its owner role** (plus the
+   superuser): `REVOKE CONNECT … FROM PUBLIC`, `GRANT CONNECT … TO <role>`.
+   Postgres would otherwise let every role connect to every database, so a
+   staging login could open production. Sites that share a role (dmb, abm and
+   nihongo all use `thedumebi`) can open each other's databases; give each its
+   own `PG_USERNAME` to separate them.
 
 So **rotating a database password is an env-file change and a deploy**.
 Two sites that share a role must agree on its password. If they do not, nagaya
@@ -446,28 +464,40 @@ runs:
 - **Secret from nagaya's env.** `secret_header.env` names a key in nagaya's
   `.env.production`, sent as that header.
 - **Production only.** Staging copies get no crons.
+- **Ids:** a cron's id is `<project>-<name>`, e.g. `futari-nihongo-reminders`.
+  Other sites can reuse a name; two crons with the same name **in one site**
+  is a render error.
 
 ---
 
 ## services
 
+abm's, which uses every key:
+
 ```yaml
 services:
   backend:
-    port: 3004
-    mem: 768m
-    command: DB_MIGRATING=true node ofuma/backend/dist/db/migrate.js && exec node ofuma/backend/dist/index.js
+    port: 3006
+    mem: 384m
+    aliases: [abm-backend]
+    command: >-
+      DB_MIGRATING=true node dist/db/migrate.js &&
+      DB_SEEDING=true node dist/db/seed.js &&
+      exec node dist/index.js
     health: /healthcheck
-    dotenvx: /app/.env.production
-    aliases: [api]
     mounts: [futari-geo]
+    dotenvx: /app/abm/backend/.env.production
+  frontend:
+    port: 8080
+    mem: 64m
+    depends_on: [backend]
 ```
 
 | Key | Meaning |
 |---|---|
 | `port` | What the process listens on inside the container. |
 | `mem` | Hard memory cap. Exceeding it kills **this container only** (then `restart: unless-stopped` brings it back), never the box. |
-| `command` | Overrides the image's CMD, run as `sh -c "<command>"`. This is where migrations and seeds run before the app starts. Write it on several lines with `>-`; whitespace is collapsed. |
+| `command` | Overrides the image's CMD, run as `sh -c "<command>"`. This is where migrations and seeds run before the app starts. Write it on several lines with `>-`; whitespace is collapsed. End it with `exec node …` so Node, not the shell, receives the stop signal and shuts down cleanly. |
 | `health` | Path that answers 2xx/3xx when the service is up. `nagaya deploy` polls it **inside the container** for up to 90 s, then rolls back to the previous tag if it never answers. |
 | `dotenvx` | Path **inside the image** of the app's encrypted `.env.production`. Setting it makes nagaya inject that environment's `DOTENV_PRIVATE_KEY_*`, and the app decrypts its own file at start-up. The staging copy uses the `.env.staging` beside it. |
 | `depends_on` | Other services **of the same site** to start first. Frontends list their backend: their nginx resolves `backend` when it starts, and fails if that container does not exist yet. It does not cover Postgres and Redis: they are in another compose project, and `nagaya apply` starts and waits for them before any site. |
@@ -528,7 +558,7 @@ Nagaya splits it into one file per environment,
 | Project / containers | `ofuma-main`, `ofuma-main-backend` | `ofuma-main-stg`, `ofuma-main-stg-backend` |
 | Hostnames | `@`, `api`, `doca`, `api-doca` | `stg`, `api-stg`, `doca-stg`, `api-doca-stg` |
 | Image | `ofuma-main-backend:<sha from master>` | the **same image name**, `<sha from stg>` |
-| Env | `NODE_ENV=production`: the backend decrypts `/app/.env.production` with `DOTENV_PRIVATE_KEY_PRODUCTION`; the frontend loads its `.env.production` | `NODE_ENV=staging`: `.env.staging` files, `DOTENV_PRIVATE_KEY_STAGING` |
+| Env | `NODE_ENV=production`: the backend decrypts `/app/.env.production` with `DOTENV_PRIVATE_KEY_PRODUCTION`; the frontend loads `runtime-env/production.env` | `NODE_ENV=staging`: the backend's `.env.staging` with `DOTENV_PRIVATE_KEY_STAGING`; the frontend's `runtime-env/staging.env` |
 | Database | `ofuma` | `ofuma_stg` |
 | Redis | same instance | same instance. **The app must namespace itself** with a different `REDIS_DB` and key prefix (DEPLOY.md §1.3), or staging workers would take production's jobs |
 | DNS | `origin` | `stg_origin` (or `origin`) |
@@ -574,6 +604,8 @@ You never write these. They are fixed functions of the registry:
 | Keys file (copied up) | `/srv/nagaya/keys/<app>-<site>-<service>.keys` | `ofuma-doca-doca-api.keys` |
 | Key file (per env, made by nagaya) | `…/<app>-<site>-<service>.<production\|staging>.key` | `ofuma-main-backend.staging.key` |
 | Image tag record | `/srv/nagaya/state/tags/<project>.env` | `TAG=3f2c1ab…` |
+| Cron id | `<project>-<name>` | `futari-nihongo-reminders` |
+| Alert check log | `/srv/nagaya/logs/alerts-<check>.log` | `alerts-memory.log` |
 | Backup object | `<bucket>/<db>/<db>-<UTC stamp>.sql.gz` | `ofuma-backups/ofuma/ofuma-2026-10-04T03-00-00Z.sql.gz` |
 
 ---
@@ -622,16 +654,21 @@ laptop or in the PR, rather than on the box. It refuses:
   - a key it does not know (a typo like `ww:` for `www:`);
   - a reference to an origin, resource or mount that is not defined;
   - a site with both `static` and `services`, or neither;
-  - a site with services and no `repo`.
+  - a site with services and no `repo`;
+  - an alert check nagaya has no code for.
 - **Routes and DNS:**
   - a route to a service that does not exist, or on the wrong port;
   - a hostname routed twice;
   - a CNAME sharing a name with another record;
-  - a site pointed at an origin whose `ip` is still `null`.
+  - a site pointed at an origin whose `ip` is still `null`;
+  - `www: redirect` on a site with no `"@"` route.
 - **Containers and data:**
   - two containers claiming the same alias on one network (Docker would pick between them at random);
+  - a `depends_on` naming anything but another service of the same site;
+  - two Postgres resources with the same `tunnel_port`;
   - a `database` with no `postgres`, or with no service whose env holds its credentials;
-  - an app with a database but no backup bucket.
+  - an app with a database but no backup bucket;
+  - two crons with the same name in one site.
 - **Staging:**
   - `network:` joining a site with a different `stg` setting;
   - a `dotenvx` path that is not a `.env.production` file.
@@ -648,13 +685,21 @@ CI runs `pnpm render:check` and fails if `generated/` is not exactly what
 
 **Give an existing site a staging copy:**
 1. Set `stg: true` on the site.
-2. In the app repo, make sure `.env.staging` exists next to `.env.production`
-   and is baked into the image.
-3. In that `.env.staging`, set `PG_DATABASE` to `<database>_stg`.
-4. Merge, then push to the repo's staging branch.
+2. In the app repo:
+   - the backend's `.env.staging` exists next to `.env.production`, is baked
+     into the image, and sets `PG_DATABASE=<database>_stg` and its own
+     `PG_USERNAME`/`PG_PASSWORD`;
+   - the frontend has `runtime-env/staging.env` with the `-stg` URLs;
+   - if the site's Redis is shared with production (as ofuma's is), the app
+     namespaces itself with `REDIS_DB` and `REDIS_PREFIX` (DEPLOY.md §1.3).
+3. Merge, then push to the repo's staging branch, which deploys staging and
+   switches it on.
 
 **Raise a memory cap:** change `mem:` and merge. The container is recreated
 with the new cap on the next `nagaya apply`.
+
+**Change when an alert check runs, or switch one off:** edit or delete its
+entry under `alerts.checks` and merge. The crontab follows.
 
 **Add a scheduled job:**
 1. Add a `cron:` entry to the site.

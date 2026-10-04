@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Futari | Study abroad admissions and visa support</title>
+    <meta
+      name="description"
+      content="We help students apply to universities abroad and get through the student visa that follows. Email admissions@futari.live."
+    />
+    <link rel="canonical" href="https://futari.live/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <meta property="og:site_name" content="Futari" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://futari.live/" />
+    <meta property="og:title" content="Futari | Study abroad admissions and visa support" />
+    <meta
+      property="og:description"
+      content="We help students apply to universities abroad and get through the student visa that follows. Email admissions@futari.live."
+    />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Futari | Study abroad admissions and visa support" />
+    <meta
+      name="twitter:description"
+      content="We help students apply to universities abroad and get through the student visa that follows. Email admissions@futari.live."
+    />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* Tokens mirror the dark theme in dmb/frontend/src/style.css so this page
+         and the rest of futari.live read as the same family. Dark is the default
+         look; the light set below is the same file's light theme. */
+      :root {
+        --bg: #030305;
+        --card: #0e0e12;
+        --text: #e7e9ee;
+        --muted: #a1a1aa;
+        --accent: #6f7a64;
+        --accent-strong: #8c9a7d;
+        --hover: #525c51;
+        --hairline: rgba(255, 255, 255, 0.09);
+        --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.37);
+        --btn-text: #0a0a0e;
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #cadfce;
+          --card: #e6f1e9;
+          --text: #171717;
+          --muted: #464f46;
+          --accent: #4f5c4f;
+          --accent-strong: #3c463c;
+          --hover: #3c463c;
+          --hairline: rgba(23, 23, 23, 0.1);
+          --card-shadow: 0 8px 32px rgba(79, 92, 79, 0.16);
+          --btn-text: #ffffff;
+        }
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
+        font-weight: 400;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
+      }
+
+      .wrap {
+        width: 100%;
+        max-width: 68rem;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+
+      a {
+        color: var(--accent-strong);
+      }
+
+      /* Header */
+      .site-head {
+        padding: 28px 0;
+      }
+
+      .site-head .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        font-size: 1.15rem;
+        letter-spacing: 0.02em;
+        color: var(--text);
+        text-decoration: none;
+      }
+
+      .brand .mark {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: var(--accent);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--btn-text);
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+
+      .head-mail {
+        font-size: 0.92rem;
+        font-weight: 500;
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      .head-mail:hover {
+        color: var(--text);
+      }
+
+      /* Hero */
+      .hero {
+        padding: 56px 0 72px;
+      }
+
+      .eyebrow {
+        margin: 0 0 18px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent-strong);
+      }
+
+      h1 {
+        margin: 0 0 20px;
+        font-size: clamp(2.1rem, 6vw, 3.4rem);
+        font-weight: 600;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        max-width: 18ch;
+      }
+
+      .lede {
+        margin: 0 0 32px;
+        font-size: clamp(1.02rem, 2.2vw, 1.2rem);
+        font-weight: 300;
+        color: var(--muted);
+        max-width: 56ch;
+      }
+
+      .cta-row {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 14px 26px;
+        border-radius: 10px;
+        background: var(--accent);
+        color: var(--btn-text);
+        font-weight: 600;
+        font-size: 1rem;
+        text-decoration: none;
+        transition:
+          background 0.18s ease,
+          transform 0.18s ease;
+      }
+
+      .btn:hover,
+      .btn:focus-visible {
+        background: var(--hover);
+        transform: translateY(-2px);
+      }
+
+      .cta-note {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      /* Sections */
+      section {
+        padding: 44px 0;
+      }
+
+      h2 {
+        margin: 0 0 8px;
+        font-size: clamp(1.5rem, 3.4vw, 2rem);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .section-note {
+        margin: 0 0 32px;
+        color: var(--muted);
+        font-weight: 300;
+        max-width: 56ch;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr));
+        gap: 18px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--hairline);
+        border-radius: 14px;
+        box-shadow: var(--card-shadow);
+        padding: 26px 24px;
+      }
+
+      .card h3 {
+        margin: 0 0 10px;
+        font-size: 1.06rem;
+        font-weight: 600;
+      }
+
+      .card p {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 300;
+        color: var(--muted);
+      }
+
+      .step-no {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        margin-bottom: 14px;
+        border-radius: 50%;
+        border: 1px solid var(--accent);
+        color: var(--accent-strong);
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+
+      /* FAQ */
+      .faq {
+        display: grid;
+        gap: 14px;
+        max-width: 48rem;
+      }
+
+      details {
+        background: var(--card);
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        padding: 18px 22px;
+      }
+
+      details[open] {
+        box-shadow: var(--card-shadow);
+      }
+
+      summary {
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 1rem;
+        list-style: none;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::after {
+        content: '+';
+        color: var(--accent-strong);
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+
+      details[open] summary::after {
+        content: '\2212';
+      }
+
+      details p {
+        margin: 14px 0 0;
+        font-size: 0.95rem;
+        font-weight: 300;
+        color: var(--muted);
+      }
+
+      /* Close */
+      .close {
+        text-align: center;
+        padding: 64px 0 72px;
+      }
+
+      .close h2 {
+        margin-bottom: 14px;
+      }
+
+      .close p {
+        margin: 0 auto 28px;
+        max-width: 44ch;
+        color: var(--muted);
+        font-weight: 300;
+      }
+
+      .mail-big {
+        display: inline-block;
+        font-size: clamp(1.25rem, 4.5vw, 1.9rem);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--accent-strong);
+        text-decoration: none;
+        border-bottom: 2px solid transparent;
+        word-break: break-word;
+      }
+
+      .mail-big:hover,
+      .mail-big:focus-visible {
+        border-bottom-color: var(--accent-strong);
+      }
+
+      /* Footer */
+      footer {
+        border-top: 1px solid var(--hairline);
+        padding: 26px 0 40px;
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+
+      footer .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      footer a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      footer a:hover {
+        color: var(--text);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="site-head">
+      <div class="wrap">
+        <a class="brand" href="/">
+          <span class="mark" aria-hidden="true">F</span>
+          Futari
+        </a>
+        <a class="head-mail" href="mailto:admissions@futari.live?subject=Admissions%20enquiry">
+          admissions@futari.live
+        </a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="eyebrow">Admissions and student visas</p>
+          <h1>Study abroad, from the first application to the visa.</h1>
+          <p class="lede">
+            We work with students who want to study in another country and would rather not
+            work the process out alone. Choosing where to apply, putting the application
+            together, and then the visa that comes after the offer.
+          </p>
+          <div class="cta-row">
+            <a class="btn" href="mailto:admissions@futari.live?subject=Admissions%20enquiry">
+              Email admissions@futari.live
+            </a>
+            <span class="cta-note">The first conversation is free.</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="help">
+        <div class="wrap">
+          <h2>What we help with</h2>
+          <p class="section-note">
+            Four parts of the same journey. Most people need help with all of them, but you
+            can come to us for one.
+          </p>
+
+          <div class="grid">
+            <article class="card">
+              <h3>Choosing where to apply</h3>
+              <p>
+                A shortlist of schools and courses that fit your grades, your budget and what
+                you want to do afterwards. Including the ones you would not have found on your
+                own.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>The application itself</h3>
+              <p>
+                Personal statement, references, transcripts, English tests and the deadlines
+                that go with them. We read your drafts and tell you honestly what is not
+                working yet.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>After the offer</h3>
+              <p>
+                Picking the right offer, deposits, your CAS or I-20, and getting financial
+                evidence into the shape the embassy actually expects to see.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>The student visa</h3>
+              <p>
+                The application, the documents that go with it, and what happens at the
+                appointment. Nobody should walk into that interview guessing.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="how">
+        <div class="wrap">
+          <h2>How it works</h2>
+          <p class="section-note">No forms and no portal. It starts with an email.</p>
+
+          <div class="grid">
+            <article class="card">
+              <span class="step-no">1</span>
+              <h3>You email us</h3>
+              <p>
+                Tell us where you are. Your results, what you want to study, the countries you
+                have in mind and roughly when you want to start. A few paragraphs is plenty.
+              </p>
+            </article>
+
+            <article class="card">
+              <span class="step-no">2</span>
+              <h3>We talk it through</h3>
+              <p>
+                A call to work out what is realistic, what it will cost and what the timeline
+                looks like. If we are not the right help for you, we will say so.
+              </p>
+            </article>
+
+            <article class="card">
+              <span class="step-no">3</span>
+              <h3>We work through it together</h3>
+              <p>
+                Applications, offers, paperwork, visa. At every point you know what the next
+                thing is and whose job it is.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq">
+        <div class="wrap">
+          <h2>Questions</h2>
+          <p class="section-note">The ones we get asked first.</p>
+
+          <div class="faq">
+            <details>
+              <summary>Which countries do you cover?</summary>
+              <p>
+                Mostly the UK, Ireland, Canada and the United States. If you have somewhere
+                else in mind, ask. If we do not know that system well we will tell you, rather
+                than learn it on your application.
+              </p>
+            </details>
+
+            <details>
+              <summary>When should I start?</summary>
+              <p>
+                Earlier than you think. Most intakes want applications nine to twelve months
+                ahead, and funding deadlines usually fall before admission deadlines. If you
+                are already late, email anyway. Plenty is still possible.
+              </p>
+            </details>
+
+            <details>
+              <summary>What does it cost?</summary>
+              <p>
+                It depends on how much of it you want us to carry. Tell us what you need in
+                your first email and you get a price before any work starts. The first
+                conversation costs nothing.
+              </p>
+            </details>
+
+            <details>
+              <summary>Can you guarantee me an offer or a visa?</summary>
+              <p>
+                No, and you should not trust anyone who says they can. Those decisions belong
+                to the university and the embassy. What we can do is make sure your
+                application is the strongest honest version of itself, and that nothing gets
+                refused for a reason that was avoidable.
+              </p>
+            </details>
+
+            <details>
+              <summary>What should I put in the first email?</summary>
+              <p>
+                Your most recent results, what you want to study, the countries you are
+                considering, the intake you are aiming for, and anything you are already
+                worried about. Attach your transcripts if you have them to hand.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="close">
+        <div class="wrap">
+          <h2>Ready when you are</h2>
+          <p>Send us where you are and where you want to go. We will take it from there.</p>
+          <a class="mail-big" href="mailto:admissions@futari.live?subject=Admissions%20enquiry">
+            admissions@futari.live
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>Futari</span>
+        <a href="mailto:admissions@futari.live?subject=Admissions%20enquiry">admissions@futari.live</a>
+      </div>
+    </footer>
+  </body>
+</html>
