@@ -5,5 +5,6 @@ SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
 0 3 * * * /srv/nagaya/bin/nagaya backup >> /srv/nagaya/logs/backup.log 2>&1
-*/5 * * * * /srv/nagaya/bin/nagaya alerts >> /srv/nagaya/logs/alerts.log 2>&1
+*/5 * * * * /srv/nagaya/bin/nagaya alerts memory >> /srv/nagaya/logs/alerts-memory.log 2>&1
+7 6 * * * /srv/nagaya/bin/nagaya alerts cloudflare-ranges >> /srv/nagaya/logs/alerts-cloudflare-ranges.log 2>&1
 */15 * * * * /srv/nagaya/bin/nagaya cron futari-nihongo-reminders >> /srv/nagaya/logs/cron.log 2>&1

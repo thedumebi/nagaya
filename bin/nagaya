@@ -12,7 +12,7 @@
 #   nagaya backup                    dump every database to R2 (cron runs this nightly)
 #   nagaya drill <db>                restore the newest backup into a scratch DB and compare
 #   nagaya cron <id>                 run one scheduled call from sites.yaml
-#   nagaya alerts [--test]           check memory/swap/disk; email if needed (cron)
+#   nagaya alerts <check>|--test     run one alert check from sites.yaml (memory, cloudflare-ranges)
 #   nagaya status                    what is running, tags, staging state, memory
 #   nagaya psql <db>                 interactive psql as the superuser
 #   nagaya core <compose args>       docker compose on core.yml, with nagaya's secrets loaded
@@ -632,27 +632,36 @@ memory_snapshot() {
   df -h / | tail -1
 }
 
-# Every 5 minutes (cron). Measures, compares with sites.yaml's thresholds,
+# `nagaya alerts <check>`: run one check from sites.yaml's alerts.checks, or
+# `--test` to send a test email. Each check is scheduled by its own crontab
+# line, rendered from that check's `every`.
+cmd_alerts() { # <check>|--test
+  [[ "$(plan '.alerts != null')" == true ]] || { info "sites.yaml has no alerts: block"; return 0; }
+  case "$1" in
+    --test)
+      send_mail "[nagaya] test alert" "$(printf 'This is a test from nagaya alerts on %s.\n\n' "$(hostname)"; memory_snapshot)"
+      ok "test email sent to $(plan '.alerts.to | join(", ")')" ;;
+    memory)            check_memory ;;
+    cloudflare-ranges) check_cloudflare_ranges ;;
+    *) die "unknown alert check \"$1\" (sites.yaml alerts.checks: memory, cloudflare-ranges)" ;;
+  esac
+}
+
+# The memory check (cron, on its own schedule). Measures, compares with sites.yaml's thresholds,
 # and emails when a condition starts, every repeatHours while it lasts, and
 # once when it clears. Swap is judged by ACTIVITY (pages moved in and out per
 # second since the last run), not by how much swap is in use: idle pages
 # parked in swap are harmless, constant paging is not.
-cmd_alerts() {
-  [[ "$(plan '.alerts != null')" == true ]] || { info "sites.yaml has no alerts: block"; return 0; }
-  if [[ "${1:-}" == --test ]]; then
-    send_mail "[nagaya] test alert" "$(printf 'This is a test from nagaya alerts on %s.\n\n' "$(hostname)"; memory_snapshot)"
-    ok "test email sent to $(plan '.alerts.to | join(", ")')"
-    return 0
-  fi
-
+check_memory() {
+  [[ "$(plan '.alerts.checks.memory != null')" == true ]] || die "sites.yaml has no alerts.checks.memory"
   mkdir -p "$ALERTS_DIR"
   local now; now="$(date +%s)"
   local memory_threshold_mb swap_threshold pressure_threshold disk_threshold repeat_seconds
-  memory_threshold_mb="$(plan .alerts.thresholds.memAvailableMb)"
-  swap_threshold="$(plan .alerts.thresholds.swapPagesPerSec)"
-  pressure_threshold="$(plan .alerts.thresholds.psiSomeAvg300)"
-  disk_threshold="$(plan .alerts.thresholds.diskUsedPct)"
-  repeat_seconds=$(( $(plan .alerts.repeatHours) * 3600 ))
+  memory_threshold_mb="$(plan .alerts.checks.memory.thresholds.memAvailableMb)"
+  swap_threshold="$(plan .alerts.checks.memory.thresholds.swapPagesPerSec)"
+  pressure_threshold="$(plan .alerts.checks.memory.thresholds.psiSomeAvg300)"
+  disk_threshold="$(plan .alerts.checks.memory.thresholds.diskUsedPct)"
+  repeat_seconds=$(( $(plan .alerts.checks.memory.repeatHours) * 3600 ))
 
   # ── measure ──
   local available_mb swap_used_mb swap_in_pages swap_out_pages oom_kills memory_pressure disk_used
@@ -733,6 +742,60 @@ cmd_alerts() {
   fi
 }
 
+# The cloudflare-ranges check (cron, on its own schedule). The box's own check that Cloudflare's published IP ranges
+# still match render/cloudflare-ips.json, which the firewall and Caddy are
+# built from. GitHub's weekly workflow normally opens a PR for a change, but
+# scheduled workflows can be delayed or skipped; this check does not depend
+# on them. It only reports: changing the firewall stays a reviewed PR.
+check_cloudflare_ranges() {
+  local published_ranges committed_ranges
+  published_ranges="$( { curl -fsS --max-time 20 https://www.cloudflare.com/ips-v4; echo; curl -fsS --max-time 20 https://www.cloudflare.com/ips-v6; } 2>/dev/null \
+    | tr -d ' \r' | grep -E '^[0-9a-fA-F:.]+/[0-9]{1,3}$' | sort -u || true)"
+  if (( $(grep -c . <<<"$published_ranges") < 10 )); then
+    warn "$(date -u +%FT%TZ) could not fetch Cloudflare's ranges (or got too few); will try again next run"
+    return 0
+  fi
+  committed_ranges="$(jq -r '.[]' "$ROOT/render/cloudflare-ips.json" | sort -u)"
+  if [[ "$published_ranges" == "$committed_ranges" ]]; then
+    info "$(date -u +%FT%TZ) Cloudflare ranges unchanged ($(grep -c . <<<"$published_ranges"))"
+    return 0
+  fi
+
+  # Report each distinct new list once, however many days it takes to merge.
+  mkdir -p "$ALERTS_DIR"
+  local ranges_fingerprint
+  ranges_fingerprint="$(sha256sum <<<"$published_ranges" | cut -c1-16)"
+  if [[ "$(cat "$ALERTS_DIR/cf-ranges" 2>/dev/null || true)" == "$ranges_fingerprint" ]]; then
+    info "$(date -u +%FT%TZ) Cloudflare ranges changed; already reported"
+    return 0
+  fi
+  local added_ranges removed_ranges
+  added_ranges="$(comm -13 <(echo "$committed_ranges") <(echo "$published_ranges"))"
+  removed_ranges="$(comm -23 <(echo "$committed_ranges") <(echo "$published_ranges"))"
+  local email_text
+  email_text="$(
+    echo "Cloudflare's published IP ranges no longer match render/cloudflare-ips.json."
+    echo
+    echo "Added (Cloudflare traffic from these is currently REFUSED by the firewall):"
+    echo "${added_ranges:-  (none)}"
+    echo
+    echo "Removed (still allowed by the firewall until you update it):"
+    echo "${removed_ranges:-  (none)}"
+    echo
+    echo "To fix, on the laptop:"
+    echo "  pnpm render:refresh-cf-ips && git checkout -b cf-ranges && git commit -am 'Update Cloudflare IP ranges' && git push"
+    echo "then merge the PR (or merge the bot's PR if it already opened one), and on the box:"
+    echo "  sudo /srv/nagaya/generated/firewall.sh"
+  )"
+  if send_mail "[nagaya] Cloudflare IP ranges changed" "$email_text"; then
+    printf '%s' "$ranges_fingerprint" > "$ALERTS_DIR/cf-ranges"
+    ok "reported changed Cloudflare ranges"
+  else
+    warn "could not send the email; will retry next run"
+    return 1
+  fi
+}
+
 # ───────────────────────────── status ─────────────────────────────
 
 cmd_status() {
@@ -791,7 +854,7 @@ main() {
     restore)  [[ $# -ge 2 ]] || usage_for "$command"; take_lock; cmd_restore "$@" ;;
     drill)    [[ $# -eq 1 ]] || usage_for "$command"; take_lock; cmd_drill "$@" ;;
     cron)     [[ $# -eq 1 ]] || usage_for "$command"; cmd_cron "$@" ;;
-    alerts)   cmd_alerts "$@" ;;
+    alerts)   [[ $# -eq 1 ]] || usage_for "$command"; cmd_alerts "$1" ;;
     status)   cmd_status ;;
     core)     take_lock; compose_core "$@" ;;
     psql)

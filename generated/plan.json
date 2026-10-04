@@ -568,13 +568,20 @@
       "chiwuzohdaniel@gmail.com"
     ],
     "from": "nagaya@futari.live",
-    "every": "*/5 * * * *",
-    "repeatHours": 6,
-    "thresholds": {
-      "memAvailableMb": 400,
-      "swapPagesPerSec": 100,
-      "psiSomeAvg300": 10,
-      "diskUsedPct": 85
+    "checks": {
+      "memory": {
+        "every": "*/5 * * * *",
+        "repeatHours": 6,
+        "thresholds": {
+          "memAvailableMb": 400,
+          "swapPagesPerSec": 100,
+          "psiSomeAvg300": 10,
+          "diskUsedPct": 85
+        }
+      },
+      "cloudflareRanges": {
+        "every": "7 6 * * *"
+      }
     }
   },
   "backups": {

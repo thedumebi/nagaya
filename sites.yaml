@@ -52,31 +52,38 @@ backups:
     futari: dmb-backups
     ofuma: ofuma-backups
 
-# ─────────────── Box health alerts ───────────────
-# ONE block for the whole box, not a list of alerts. Each run of `nagaya
-# alerts` (on the `every` schedule) checks ALL the thresholds below, plus OOM
-# kills, which are always on. If any check fails, it sends ONE email, via
-# Brevo, listing every failing check.
+# ─────────────── Alerts ───────────────
+# Emails about the box itself, sent through Brevo to `to`. Each entry under
+# `checks` is one kind of check with its own cron schedule; the crontab runs
+# `nagaya alerts <check>` on that schedule. Remove a check to switch it off.
 #
-# You get an email when a problem starts, a reminder every `repeat_hours`
-# while it lasts, and a final email when it clears.
+#   More recipients   → make `to` a list.
+#   Different timing  → change that check's `every`.
+#   Different limits  → change the memory check's `thresholds`.
+#   A new kind of check (e.g. a container that keeps restarting) → add it here
+#   AND its code in bin/nagaya (the schema only accepts kinds nagaya knows).
 #
-#   More recipients  → make `to` a list.
-#   Different limits → change the numbers under `thresholds`.
-#   A new kind of check (e.g. a container that keeps restarting) → add a
-#   threshold here AND its check in cmd_alerts in bin/nagaya.
-#
-# DEPLOY.md "Day-2 → Memory" explains each number and what to do when one fires.
+# DEPLOY.md "Day-2 → Memory" explains each memory number and what to do.
 alerts:
   to: chiwuzohdaniel@gmail.com           # one inbox, or a list: [a@x.com, b@y.com]
   from: nagaya@futari.live               # must be on a Brevo-authenticated domain (futari.live is)
-  every: "*/5 * * * *"                   # cron schedule for the checks
-  repeat_hours: 6                        # re-send while a problem lasts, at most this often
-  thresholds:
-    mem_available_mb: 400                # alert when available memory drops below 400 MB
-    swap_pages_per_sec: 100              # alert at 100 pages/s swapped in+out (1 page = 4 KB, so ~400 KB/s), averaged since the last run
-    psi_some_avg300: 10                  # alert when processes waited on memory >10% of the last 5 min
-    disk_used_pct: 85                    # alert when the root disk is 85% full
+  checks:
+    # Memory, swap, memory pressure, disk; OOM kills are always reported.
+    # One email when a problem starts, a reminder every repeat_hours while it
+    # lasts, one when it clears.
+    memory:
+      every: "*/5 * * * *"
+      repeat_hours: 6
+      thresholds:
+        mem_available_mb: 400            # alert when available memory drops below 400 MB
+        swap_pages_per_sec: 100          # alert at 100 pages/s swapped in+out (1 page = 4 KB, so ~400 KB/s), averaged since the last run
+        psi_some_avg300: 10              # alert when processes waited on memory >10% of the last 5 min
+        disk_used_pct: 85                # alert when the root disk is 85% full
+    # Cloudflare's published IP ranges vs render/cloudflare-ips.json, which the
+    # firewall and Caddy are built from. Reports each new list once; never
+    # changes the firewall itself. Independent of GitHub's scheduled workflow.
+    cloudflare-ranges:
+      every: "7 6 * * *"
 
 # ─────────────── Apps: one per domain; sites are the subdomains under it ───────────────
 apps:
@@ -127,7 +134,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/dmb/backend/.env.production
-          frontend:
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -148,7 +155,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/abm/backend/.env.production
-          frontend:
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -169,7 +176,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/nihongo/backend/.env.production
-          frontend:
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend

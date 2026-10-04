@@ -1,0 +1,52 @@
+# Every pull request: the renderer's tests, the registry check, and a
+# Terraform plan in the job log so you can see what a sites.yaml change will
+# do to DNS before merging it.
+name: PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Fails if generated/ is not exactly what sites.yaml produces: someone
+      # edited sites.yaml without re-rendering, or hand-edited generated/.
+      - run: pnpm render:check
+
+  plan:
+    name: Terraform plan
+    needs: render
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.5
+      - run: terraform fmt -check -recursive
+      - run: terraform init -input=false -backend-config=backend.hcl
+      # -lock=false: a plan only reads, and must not block a real apply.
+      - run: terraform plan -input=false -lock=false

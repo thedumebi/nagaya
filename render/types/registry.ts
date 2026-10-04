@@ -202,10 +202,8 @@ export const backupsConfigSchema = z.object({
 }).strict()
 export type BackupsConfig = z.infer<typeof backupsConfigSchema>
 
-// Box health alerts, emailed through Brevo by `nagaya alerts` (cron).
-export const alertsConfigSchema = z.object({
-  to: z.union([z.string().email(), z.array(z.string().email()).nonempty()]), // one inbox or several
-  from: z.string().email(), // must be on a domain authenticated in Brevo
+// Memory, swap, memory pressure and disk.
+export const memoryCheckConfigSchema = z.object({
   every: z.string(), // cron schedule
   repeat_hours: z.number().positive(), // re-send while a problem persists
   thresholds: z.object({
@@ -213,6 +211,25 @@ export const alertsConfigSchema = z.object({
     swap_pages_per_sec: z.number().positive(), // swap-in + swap-out, averaged since the last check
     psi_some_avg300: z.number().positive(), // % of the last 5 min some task waited on memory
     disk_used_pct: z.number().int().min(1).max(99),
+  }).strict(),
+}).strict()
+export type MemoryCheckConfig = z.infer<typeof memoryCheckConfigSchema>
+
+// Cloudflare's published IP ranges vs the committed list.
+export const cloudflareRangesCheckConfigSchema = z.object({
+  every: z.string(), // cron schedule
+}).strict()
+export type CloudflareRangesCheckConfig = z.infer<typeof cloudflareRangesCheckConfigSchema>
+
+// Emails about the box, sent through Brevo. Each check is a kind bin/nagaya
+// knows how to run (`nagaya alerts <check>`), with its own schedule; an
+// unknown kind is a render error, since there would be no code behind it.
+export const alertsConfigSchema = z.object({
+  to: z.union([z.string().email(), z.array(z.string().email()).nonempty()]), // one inbox or several
+  from: z.string().email(), // must be on a domain authenticated in Brevo
+  checks: z.object({
+    'memory': memoryCheckConfigSchema.optional(),
+    'cloudflare-ranges': cloudflareRangesCheckConfigSchema.optional(),
   }).strict(),
 }).strict()
 export type AlertsConfig = z.infer<typeof alertsConfigSchema>

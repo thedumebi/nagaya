@@ -418,14 +418,11 @@ to off. Until a site is cut over, you run them by hand to **build images
 only**; the old `deploy-vps.yaml` keeps deploying to Hetzner on push. Each
 site's cutover step turns `push:` on and deletes the old workflow.
 
-**Template values to check against the live sites** (they are baked into
-the SPA at build time):
-
-| Site | `VITE_API_URL` | `VITE_APP_TITLE` |
-|---|---|---|
-| dmb | `https://dmb.futari.live/api` | `DMB` |
-| abm | `https://abm.futari.live/api` | `ABM` |
-| nihongo | `https://nihongo.futari.live/api` | `go`, which is what the live `.env.production` sets today (it overrides compose's default `Nihongo`). Change it in the template if that was never intended. |
+**The templates pass no frontend values.** Every frontend, futari's included,
+is built with placeholders and reads its URL and title at start-up from
+`frontend/runtime-env/<NODE_ENV>.env` in its own repo (§1.5 for ofuma, §1.7
+for futari). So §1.7 must be merged in a futari repo **before** its nagaya
+workflow builds images.
 
 **1.4.1** 🌐 **BROWSER (GitHub)** — run each new workflow once to create its
 images: repo → **Actions** → **Deploy (nagaya)** → **Run workflow** → branch
@@ -566,6 +563,61 @@ cut from `stg`:
 Merge it: PR into `stg`, then `stg` into `master` as usual. It is safe on
 Hetzner. The code and its env file change together in one commit, and Hetzner's
 compose never names doca's database keys itself.
+
+### 1.7 💻 LAPTOP — futari: the frontends read their runtime values from their own repo *(done; review and merge)*
+
+The same change as ofuma's §1.5, for dmb, abm and nihongo. It makes their
+frontends work like their backends:
+- **one image** serves production and staging;
+- the values live **in the app repo, per environment**;
+- **nagaya passes only `NODE_ENV`**.
+
+**Why it was needed.** Until now these three frontends had their API URL and
+title **baked in at build time** (`ARG VITE_API_URL` in the Dockerfile, set
+by the deploy workflow). A futari staging copy would have run the production
+image, and its staging frontend would have called the **production** API.
+
+The change is on branch **`nagaya/frontend-runtime-env`** in each of the three
+repos, cut from `master`. Shown for dmb (abm and nihongo are the same, with
+`ABM_` / `NIHONGO_` prefixes):
+
+| File | What it does |
+|---|---|
+| `dmb/frontend/runtime-env/production.env` | `DMB_API_URL=https://dmb.futari.live/api`, `DMB_APP_TITLE=DMB`. Today's live values |
+| `dmb/frontend/runtime-env/staging.env` | `DMB_API_URL=https://dmb-stg.futari.live/api`, `DMB_APP_TITLE=DMB [Staging]`. Only used if the site ever gets `stg: true` |
+| `dmb/frontend/env.sh` | At container start (as `/docker-entrypoint.d/40-runtime-env.sh`): loads `/etc/app-env/${NODE_ENV:-production}.env`, then replaces every `DMB_*` placeholder in the built `.js`/`.html`/`.css` with its value. A variable already set in the container's environment wins. POSIX `sh`, since the nginx Alpine image has no bash |
+| `dmb/frontend/Dockerfile` | The build stage sets `VITE_API_URL=DMB_API_URL` and `VITE_APP_TITLE=DMB_APP_TITLE` (placeholders) instead of taking `ARG`s. The runner copies `env.sh` and `runtime-env/`, and gives the built files to uid 101 so the unprivileged nginx user can rewrite them |
+
+nihongo's title stays `go`, which is what its live `.env.production` sets
+today. Change `runtime-env/production.env` if that was never intended.
+
+**What was checked:**
+- **Build:** dmb's real frontend, built the way the Dockerfile builds it,
+  succeeds, and the output contains the placeholders (`DMB_API_URL`,
+  `DMB_APP_TITLE` ×5, including the `<title>` and Open Graph tags).
+- **`env.sh`:** run against that output, it fills in the staging values with
+  `NODE_ENV=staging` and keeps a value containing `&` and `|` intact.
+
+**Not checked:** the container end to end (Docker was not running). Do this
+once per repo before merging:
+```bash
+unset -f cd pnpm node npm npx 2>/dev/null
+cd ~/Documents/projects/dmb.futari && git checkout nagaya/frontend-runtime-env
+docker build --platform linux/amd64 -f dmb/frontend/Dockerfile -t dmb-fe:check .
+docker run --rm -d --name dmb-fe-check -e NODE_ENV=staging -p 8089:8080 dmb-fe:check
+docker logs dmb-fe-check | grep runtime-env      # loading /etc/app-env/staging.env, replaced 2 placeholder(s)
+curl -s localhost:8089 | grep -o '<title>[^<]*'  # <title>DMB [Staging]
+docker rm -f dmb-fe-check
+```
+
+**It's safe on Hetzner before cutover:**
+- Hetzner's compose still passes `VITE_API_URL` as a build argument; the
+  Dockerfile no longer reads it, so Docker only warns that it's unused.
+- Hetzner's frontend container sets no `NODE_ENV`, so `env.sh` uses
+  `production.env`, which holds exactly today's values.
+
+**Merge it into `master`** in each repo, before that repo's first nagaya image
+build (§1.4.1).
 
 ---
 
@@ -1902,7 +1954,7 @@ restore of a live database is `nagaya restore <db> latest --replace`
 ## Phase 9 — Decommission
 
 After **7 days** with every site on nagaya and nothing odd in
-`/srv/nagaya/logs/alerts.log`:
+`/srv/nagaya/logs/alerts-memory.log`:
 
 **9.1** 🌐 **Hetzner Cloud** — for each of `dmb-prod`, `ofuma-prod`, `ofuma-stg`:
 1. **Snapshots** → **Take snapshot**. It costs cents a month, and it is the last
@@ -1958,7 +2010,7 @@ OAuth origins and redirect URIs.
 | **The registry** (`sites.yaml`) | Branch, edit, `pnpm render`, commit both, open a PR. CI shows the Terraform plan. Merge → Terraform apply → `nagaya apply`. |
 | **nagaya itself** (`bin/nagaya`, renderer, static page) | PR → merge; `nagaya apply` pulls it. |
 | **The futari.live page** | Edit `static/futari/`, PR → merge. Caddy reads from disk, so no reload is needed. |
-| **Cloudflare's IP ranges** | The weekly bot PR. Merge it, then `sudo /srv/nagaya/generated/firewall.sh` on the box. The PR only runs `pr.yml`'s checks if the `BOT_PR_TOKEN` secret is set (see the workflow's comment); otherwise the merge's `apply.yml` is the check. Either way, enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** once. |
+| **Cloudflare's IP ranges** | Two independent signals: the box's daily `nagaya alerts cloudflare-ranges` (cron, `sites.yaml` → `alerts.checks`) emails you when the published ranges differ from the repo's, and the weekly bot PR does the edit for you. Merge the PR (or run `pnpm render:refresh-cf-ips` and open one yourself), then `sudo /srv/nagaya/generated/firewall.sh` on the box. The PR only runs `pr.yml`'s checks if the `BOT_PR_TOKEN` secret is set (see the workflow's comment); otherwise the merge's `apply.yml` is the check. Either way, enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** once. |
 
 ## Adding a site
 
@@ -2062,7 +2114,7 @@ merge. For an emergency without CI: `git revert` locally, `pnpm render`,
 | `/srv/nagaya/state/tags/` | the image tag each project runs (`<project>.env`) and the previous one (`.prev.env`) |
 | `/srv/nagaya/state/stg/` | `up` / `down` per staging project |
 | `/srv/nagaya/state/alerts/` | alert bookkeeping: last swap counters, when each alert was last sent |
-| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts.log` |
+| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts-memory.log`, `alerts-cloudflare-ranges.log` |
 | `/srv/shared/futari/geodata` | GeoLite2, shared by the futari backends |
 | `/etc/docker/daemon.json` | log rotation, address pool (§2.7) |
 
@@ -2073,7 +2125,7 @@ nagaya status                               # projects, tags, staging state, doc
 docker logs -f --tail 100 ofuma-main-backend
 docker compose -p futari-dmb ps             # one project's containers
 nagaya psql dmb                             # psql as the superuser
-tail -f /srv/nagaya/logs/alerts.log         # one line every 5 minutes: the numbers alerts acts on
+tail -f /srv/nagaya/logs/alerts-memory.log  # one line every 5 minutes: the numbers the memory check acts on
 ```
 
 ### Connect a database client (TablePlus etc.)
@@ -2131,9 +2183,10 @@ journalctl -k | grep -i oom          # the kernel killed something: a container 
 docker ps -a --format '{{.Names}}' | xargs docker inspect -f '{{.Name}} oomkilled={{.State.OOMKilled}} restarts={{.RestartCount}}' | grep oomkilled=true
 ```
 
-**The alerts do this watching for you.** `nagaya alerts` runs from cron every
-5 minutes (`sites.yaml` → `alerts:`). It logs one line per run to
-`logs/alerts.log` and emails `alerts.to` through Brevo when any of these trips:
+**The alerts do this watching for you.** `nagaya alerts memory` runs from cron
+on the schedule in `sites.yaml` → `alerts.checks.memory.every` (every 5
+minutes). It logs one line per run to `logs/alerts-memory.log` and emails
+`alerts.to` through Brevo when any of these trips:
 
 | Check | Default threshold | Measured from |
 |---|---|---|
@@ -2153,7 +2206,7 @@ How the emails behave:
   `BREVO_API_KEY` in nagaya's `.env.production`, the same key the futari apps
   use. If a send fails, it is retried on the next run.
 - **To check the pipe:** run `nagaya alerts --test` at any time.
-- **To tune:** change the thresholds in `sites.yaml` and merge.
+- **To tune:** change the thresholds (or `every`) under `alerts.checks.memory` in `sites.yaml` and merge.
 
 **What to do when it fires:**
 1. **Find the cause.** `nagaya status`: which container is big?

@@ -15,8 +15,11 @@ export function renderCrontab(model: Model): string {
     '',
     `${model.registry.backups.at} ${ROOT}/bin/nagaya backup >> ${ROOT}/logs/backup.log 2>&1`,
   ]
-  if (model.registry.alerts)
-    lines.push(`${model.registry.alerts.every} ${ROOT}/bin/nagaya alerts >> ${ROOT}/logs/alerts.log 2>&1`)
+  // One line per alert check, on the schedule sites.yaml gives it.
+  for (const [checkName, checkConfig] of Object.entries(model.registry.alerts?.checks ?? {})) {
+    if (checkConfig)
+      lines.push(`${checkConfig.every} ${ROOT}/bin/nagaya alerts ${checkName} >> ${ROOT}/logs/alerts-${checkName}.log 2>&1`)
+  }
   for (const project of model.projects) {
     for (const cron of project.crons)
       lines.push(`${cron.at} ${ROOT}/bin/nagaya cron ${cron.id} >> ${ROOT}/logs/cron.log 2>&1`)
@@ -136,6 +139,35 @@ export function renderTfvars(model: Model): string {
   return `${JSON.stringify({ zones, deploy_repos: deployRepos }, null, 2)}\n`
 }
 
+// alerts in plan.json: `to` always a list; check names kept as the commands
+// bin/nagaya runs ("cloudflare-ranges"); every other key camelCase.
+function renderAlertsPlan(model: Model) {
+  const alerts = model.registry.alerts
+  if (!alerts)
+    return null
+  const memoryCheck = alerts.checks.memory
+  const cloudflareRangesCheck = alerts.checks['cloudflare-ranges']
+  return {
+    to: [alerts.to].flat(),
+    from: alerts.from,
+    checks: {
+      memory: memoryCheck
+        ? {
+            every: memoryCheck.every,
+            repeatHours: memoryCheck.repeat_hours,
+            thresholds: {
+              memAvailableMb: memoryCheck.thresholds.mem_available_mb,
+              swapPagesPerSec: memoryCheck.thresholds.swap_pages_per_sec,
+              psiSomeAvg300: memoryCheck.thresholds.psi_some_avg300,
+              diskUsedPct: memoryCheck.thresholds.disk_used_pct,
+            },
+          }
+        : null,
+      cloudflareRanges: cloudflareRangesCheck ? { every: cloudflareRangesCheck.every } : null,
+    },
+  }
+}
+
 // Everything bin/nagaya needs, so the bash never re-derives a name.
 export function renderPlan(model: Model): string {
   const plan = {
@@ -171,20 +203,7 @@ export function renderPlan(model: Model): string {
     routes: model.routes.map(route => ({ host: route.host, project: route.project, variant: route.variant, kind: route.kind })),
     crons: model.projects.flatMap(project => project.crons),
     // `to` is always a list here, whichever form sites.yaml used.
-    alerts: model.registry.alerts
-      ? {
-          to: [model.registry.alerts.to].flat(),
-          from: model.registry.alerts.from,
-          every: model.registry.alerts.every,
-          repeatHours: model.registry.alerts.repeat_hours,
-          thresholds: {
-            memAvailableMb: model.registry.alerts.thresholds.mem_available_mb,
-            swapPagesPerSec: model.registry.alerts.thresholds.swap_pages_per_sec,
-            psiSomeAvg300: model.registry.alerts.thresholds.psi_some_avg300,
-            diskUsedPct: model.registry.alerts.thresholds.disk_used_pct,
-          },
-        }
-      : null,
+    alerts: renderAlertsPlan(model),
     backups: {
       databases: model.databases.map(database => ({
         name: database.name,

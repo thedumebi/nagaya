@@ -159,3 +159,15 @@ test('a cron id is <project>-<name>; two crons with one name in a site is an err
     '        cron:\n          - name: reminders\n            at: "0 * * * *"\n            service: backend\n            post: /other\n          - name: reminders',
   )), /two crons are named "reminders"/)
 })
+
+test('each alert check gets its own crontab line, on its own schedule', () => {
+  const crontab = renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES).get('generated/crontab')!
+  assert.match(crontab, /^\*\/5 \* \* \* \* \/srv\/nagaya\/bin\/nagaya alerts memory /m)
+  assert.match(crontab, /^7 6 \* \* \* \/srv\/nagaya\/bin\/nagaya alerts cloudflare-ranges /m)
+  const hourly = loadModel(SITES_YAML.replace('every: "7 6 * * *"', 'every: "0 * * * *"'))
+  assert.match(renderAll(hourly, CLOUDFLARE_RANGES).get('generated/crontab')!, /^0 \* \* \* \* \S+ alerts cloudflare-ranges /m)
+})
+
+test('an alert check nagaya has no code for is an error', () => {
+  assert.throws(loadEdited(sitesYaml => sitesYaml.replace('    cloudflare-ranges:\n', '    restarts:\n')), RegistryError)
+})

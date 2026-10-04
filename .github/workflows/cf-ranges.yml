@@ -1,0 +1,55 @@
+# Weekly: re-fetch Cloudflare's published IP ranges. If they changed, open a
+# PR (no change → no PR). Merging it updates Caddy's trusted proxies
+# automatically (apply.yml); the FIREWALL needs one manual command on the box,
+# which the PR body says.
+#
+# GitHub's scheduled runs can be late or skipped, so this is not the only
+# check: the box runs `nagaya alerts cloudflare-ranges` from cron (schedule in
+# sites.yaml → alerts.checks) and emails if the
+# ranges differ from the committed list. This workflow just saves you the
+# laptop step by opening the PR for you.
+name: Cloudflare IP ranges
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm render:refresh-cf-ips
+      # A PR opened with the default GITHUB_TOKEN does not trigger pr.yml, and
+      # needs Settings → Actions → General → "Allow GitHub Actions to create
+      # and approve pull requests". BOT_PR_TOKEN (a fine-grained PAT with
+      # Contents + Pull requests write on this repo) avoids both; without it
+      # the PR still opens and apply.yml re-checks everything on merge.
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BOT_PR_TOKEN || github.token }}
+          branch: chore/cloudflare-ip-ranges
+          commit-message: Update Cloudflare IP ranges
+          title: Update Cloudflare IP ranges
+          body: |
+            Cloudflare's published ranges changed (https://www.cloudflare.com/ips/).
+
+            Merging updates Caddy's trusted proxies on the next apply. **The firewall
+            does not update itself.** After the apply finishes, on the box:
+
+            ```bash
+            sudo /srv/nagaya/generated/firewall.sh
+            ```

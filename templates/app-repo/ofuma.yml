@@ -1,0 +1,123 @@
+# Copy to ofuma/.github/workflows/deploy-nagaya.yml, on master AND stg (DEPLOY.md §1.4).
+#
+# ofuma and doca live in one repo and ship from the same branches:
+#   master → projects ofuma-main + ofuma-doca
+#   stg    → projects ofuma-main-stg + ofuma-doca-stg  (deploying also switches staging on)
+# (The old doca/master and doca/dev branches stopped at 2026-04-29 and are not used.)
+#
+# Builds ALL FOUR images on every push, not just the changed ones, so the box
+# can always pull every image at the pushed SHA. ofuma is quiet; the extra
+# build minutes do not matter. Then deploys main before doca, because doca's
+# API calls main's backend.
+#
+# Until ofuma is cut over (DEPLOY.md §6.4), keep `push:` commented out.
+name: Deploy (nagaya)
+
+on:
+  # push:
+  #   branches: [master, stg]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after building (untick to only build and push images)
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-nagaya-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Same images for prod and staging: NODE_ENV picks .env.production or
+  # .env.staging inside each one (backends and frontends alike).
+  SUFFIX: ${{ github.ref_name == 'stg' && '-stg' || '' }}
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+jobs:
+  test:
+    name: Lint + test (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [ofuma, doca]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.0.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm exec turbo run build --filter=@${{ matrix.project }}/shared...
+      - run: pnpm exec turbo run lint --filter="./${{ matrix.project }}/*"
+      - run: pnpm exec turbo run test --filter="./${{ matrix.project }}/*"
+      - run: pnpm exec turbo run typecheck --filter="./${{ matrix.project }}/*"
+
+  build:
+    name: Build ${{ matrix.image }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: ofuma-main-backend
+            dockerfile: ofuma/backend/Dockerfile
+          - image: ofuma-main-frontend
+            dockerfile: ofuma/frontend/Dockerfile
+          - image: ofuma-doca-doca-api
+            dockerfile: doca/api/Dockerfile
+          - image: ofuma-doca-doca-web
+            dockerfile: doca/web/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runner
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/thedumebi/${{ matrix.image }}:${{ github.sha }}
+          secrets: |
+            turbo_token=${{ secrets.TURBO_TOKEN }}
+            turbo_team=${{ vars.TURBO_TEAM }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    name: Deploy to nagaya
+    needs: build
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.NAGAYA_HOST }}
+      KNOWN_HOSTS: ${{ secrets.NAGAYA_KNOWN_HOSTS }}
+      SSH_KEY: ${{ secrets.NAGAYA_SSH_KEY }}
+    steps:
+      - name: nagaya deploy (main, then doca)
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          # The key is pinned to `nagaya ssh-dispatch`, which accepts only
+          # "deploy <project> <sha>" (and "apply"). Each deploy pulls the
+          # images, creates/updates the database role, starts the containers
+          # and health-checks them, rolling back to the previous tag on failure.
+          for project in "ofuma-main${SUFFIX}" "ofuma-doca${SUFFIX}"; do
+            ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" \
+              "deploy ${project} ${{ github.sha }}"
+          done
