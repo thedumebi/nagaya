@@ -95,7 +95,7 @@ apps:
       redis:    { use: redis-futari, as: [redis, dmb-redis] }
 
     email:
-      mode: namecheap                      # namecheap → cloudflare-pending → cloudflare (RUNBOOK.md Phase 4)
+      mode: cloudflare                      # namecheap → cloudflare-pending → cloudflare (RUNBOOK.md Phase 4)
       forward_to: chiwuzohdaniel@gmail.com # the default inbox
       addresses:
         - admissions                       # a plain name → forward_to
