@@ -8,7 +8,8 @@ futari and ofuma site on one VPS.
 | **[sites.yaml](sites.yaml)** | The registry: every site, resource, DNS record and alert threshold. |
 | **[docs/sites-yaml.md](docs/sites-yaml.md)** | What each key in it means, with a worked example. |
 | **[docs/box-layout.md](docs/box-layout.md)** | Where things live on the box, and why `/srv`. |
-| **[DEPLOY.md](DEPLOY.md)** | The runbook: building the box, migrating off Hetzner, day-2 operations. |
+| **[DEPLOY.md](DEPLOY.md)** | Why: today's setup, the decisions, architecture, memory budget. |
+| **[RUNBOOK.md](RUNBOOK.md)** | How: building the box, migrating off Hetzner, shipping, rollback, day-2 operations. |
 | `render/` | `pnpm render`: sites.yaml → `generated/` (TypeScript + zod, run on Node 24). All types live in `render/types/`. |
 | `generated/` | Caddyfile, compose files, crontab, firewall, plan.json. Committed; never edited by hand. |
 | `bin/nagaya` | The CLI on the box: `apply`, `deploy`, `stg up/down`, `backup`, `restore`, `drill`, `alerts`, `status`. |

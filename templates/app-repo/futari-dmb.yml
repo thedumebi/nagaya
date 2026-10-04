@@ -1,9 +1,9 @@
-# Copy to <repo>/.github/workflows/deploy-nagaya.yml (DEPLOY.md §1.4).
+# Copy to <repo>/.github/workflows/deploy-nagaya.yml (RUNBOOK.md §1.7).
 #
 # Builds the dmb images in CI, pushes them to GHCR, then asks the nagaya box
 # to run them. Nothing is built on the box.
 #
-# Until this site is cut over (DEPLOY.md §6), keep the `push:` trigger
+# Until this site is cut over (RUNBOOK.md §6), keep the `push:` trigger
 # commented out: the old deploy-vps.yaml still deploys to Hetzner on push,
 # and this workflow is run by hand to build images for the new box.
 name: Deploy (nagaya)

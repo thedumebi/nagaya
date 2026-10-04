@@ -64,7 +64,7 @@ jobs:
       - name: Run nagaya apply on the box
         run: |
           if [ -z "$HOST" ] || [ -z "$SSH_KEY" ]; then
-            echo "::notice::NAGAYA_HOST / NAGAYA_SSH_KEY not set yet (DEPLOY.md §2.10); skipping the box."
+            echo "::notice::NAGAYA_HOST / NAGAYA_SSH_KEY not set yet (RUNBOOK.md §2.10); skipping the box."
             exit 0
           fi
           install -m 700 -d ~/.ssh

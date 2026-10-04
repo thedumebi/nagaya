@@ -52,7 +52,7 @@ resource "cloudflare_dns_record" "this" {
 # ───────────────────────────── WAF ─────────────────────────────
 
 # Scanners and probe paths are dropped at the edge, before they reach the box.
-# Ported from Nooklet DEPLOY.md §7.12. Do NOT add /swagger or /api-docs: some
+# Ported from Nooklet RUNBOOK.md §7.12. Do NOT add /swagger or /api-docs: some
 # of the apps serve their own docs and you would block them.
 locals {
   scanner_expression = join(" or ", concat(
@@ -79,7 +79,7 @@ resource "cloudflare_ruleset" "waf" {
 # ───────────────────────────── origin certificate ─────────────────────────────
 
 # 15 years, for <domain> and *.<domain>. The CSR is generated ON THE BOX
-# (DEPLOY.md §3.6); the private key never leaves it and so never enters state.
+# (RUNBOOK.md §3.6); the private key never leaves it and so never enters state.
 # No CSR yet means no certificate yet.
 resource "cloudflare_origin_ca_certificate" "this" {
   count = var.origin_csr == null ? 0 : 1
@@ -93,7 +93,7 @@ resource "cloudflare_origin_ca_certificate" "this" {
 # ───────────────────────────── email routing ─────────────────────────────
 
 # Only in mode "cloudflare". Enabling Email Routing itself (which adds
-# Cloudflare's locked MX/SPF/DKIM records) is a dashboard click, DEPLOY.md
+# Cloudflare's locked MX/SPF/DKIM records) is a dashboard click, RUNBOOK.md
 # §4.10.3; these rules need it enabled first. The destination address is
 # account-wide, so it lives in the cloudflare-email-destinations module.
 locals {

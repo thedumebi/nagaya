@@ -1,5 +1,5 @@
 output "nameservers" {
-  description = "Paste these into Namecheap → Domain → Nameservers → Custom DNS (DEPLOY.md §4.8)."
+  description = "Paste these into Namecheap → Domain → Nameservers → Custom DNS (RUNBOOK.md §4.8)."
   value       = { for domain, zone in module.zone : domain => zone.name_servers }
 }
 
@@ -9,7 +9,7 @@ output "zone_status" {
 }
 
 output "origin_certificates" {
-  description = "PEM certificates to copy to /srv/nagaya/certs/<domain>.pem (DEPLOY.md §4.11). Public data."
+  description = "PEM certificates to copy to /srv/nagaya/certs/<domain>.pem (RUNBOOK.md §4.11). Public data."
   value       = { for domain, zone in module.zone : domain => zone.origin_certificate if zone.origin_certificate != null }
 }
 

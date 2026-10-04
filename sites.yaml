@@ -14,9 +14,9 @@ registry: ghcr.io/thedumebi
 # so moving a site between boxes is a one-word change. `proxied: false` keeps
 # the record grey-clouded, which is how the Hetzner boxes keep working exactly
 # as they do today (their own Caddy, their own Let's Encrypt certs) until a
-# site is cut over. Remove the hetzner-* entries in DEPLOY.md Phase 9.
+# site is cut over. Remove the hetzner-* entries in RUNBOOK.md Phase 9.
 origins:
-  nagaya:            { ip: 152.53.205.203, proxied: true }        # fill in at DEPLOY.md §2.1 step 5
+  nagaya:            { ip: 152.53.205.203, proxied: true }        # fill in at RUNBOOK.md §2.1 step 5
   hetzner-dmb:       { ip: 138.199.195.21, proxied: false }
   hetzner-ofuma:     { ip: 91.99.67.183,   proxied: false }
   hetzner-ofuma-stg: { ip: 46.225.127.236, proxied: false }
@@ -63,7 +63,7 @@ backups:
 #   A new kind of check (e.g. a container that keeps restarting) → add it here
 #   AND its code in bin/nagaya (the schema only accepts kinds nagaya knows).
 #
-# DEPLOY.md "Day-2 → Memory" explains each memory number and what to do.
+# RUNBOOK.md "Day-2 → Memory" explains each memory number and what to do.
 alerts:
   to: chiwuzohdaniel@gmail.com           # one inbox, or a list: [a@x.com, b@y.com]
   from: nagaya@futari.live               # must be on a Brevo-authenticated domain (futari.live is)
@@ -95,7 +95,7 @@ apps:
       redis:    { use: redis-futari, as: [redis, dmb-redis] }
 
     email:
-      mode: namecheap                      # namecheap → cloudflare-pending → cloudflare (DEPLOY.md Phase 4)
+      mode: namecheap                      # namecheap → cloudflare-pending → cloudflare (RUNBOOK.md Phase 4)
       forward_to: chiwuzohdaniel@gmail.com # the default inbox
       addresses:
         - admissions                       # a plain name → forward_to
@@ -134,7 +134,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/dmb/backend/.env.production
-          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (RUNBOOK.md §1.6)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -155,7 +155,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/abm/backend/.env.production
-          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (RUNBOOK.md §1.6)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -176,7 +176,7 @@ apps:
             health: /healthcheck
             mounts: [futari-geo]
             dotenvx: /app/nihongo/backend/.env.production
-          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.7)
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (RUNBOOK.md §1.6)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -210,7 +210,7 @@ apps:
       - { type: CNAME, name: brevo2._domainkey, content: b2.ofuma-ai.dkim.brevo.com }
       - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
       # Old staging names, kept so nothing breaks at the nameserver switch.
-      # Delete in DEPLOY.md Phase 9 together with the Hetzner staging box.
+      # Delete in RUNBOOK.md Phase 9 together with the Hetzner staging box.
       - { type: A, name: doca.stg,     content: 46.225.127.236 }
       - { type: A, name: api-doca.stg, content: 46.225.127.236 }
       - { type: A, name: piston.stg,   content: 46.225.127.236 }   # PM-Interview-Bank calls this
@@ -227,7 +227,7 @@ apps:
               exec node ofuma/backend/dist/index.js
             health: /healthcheck
             dotenvx: /app/.env.production
-          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.5)
+          frontend:                        # reads runtime-env/<NODE_ENV>.env from the image (RUNBOOK.md §1.4)
             port: 8080
             mem: 64m
             depends_on: [backend]          # its nginx proxies /api to backend
@@ -248,7 +248,7 @@ apps:
               exec node doca/api/dist/index.js
             health: /healthcheck
             dotenvx: /app/.env.production
-          doca-web:                        # reads runtime-env/<NODE_ENV>.env from the image (DEPLOY.md §1.5)
+          doca-web:                        # reads runtime-env/<NODE_ENV>.env from the image (RUNBOOK.md §1.4)
             port: 8080
             mem: 64m
             depends_on: [doca-api]         # its nginx proxies /api to doca-api

@@ -1,7 +1,7 @@
 # The Actions secrets a repo's workflow uses to reach the nagaya box.
 #
 # NAGAYA_SSH_KEY is deliberately NOT here: it is a private key, and anything
-# Terraform sets is stored in state. Set it by hand (DEPLOY.md §2.10). The
+# Terraform sets is stored in state. Set it by hand (RUNBOOK.md §2.10). The
 # box's read-only deploy key for cloning nagaya is also manual (§2.8): it has
 # to exist before the box can run anything at all.
 

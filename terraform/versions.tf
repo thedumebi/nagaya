@@ -6,7 +6,7 @@
 # Inputs: generated.auto.tfvars.json (rendered from sites.yaml, never edit)
 #         terraform.tfvars          (account ids and box facts, edited by hand)
 # Layout: main.tf wires modules/ (see its header).
-# Run:    DEPLOY.md §4 (first time), then CI on every merge.
+# Run:    RUNBOOK.md §4 (first time), then CI on every merge.
 
 terraform {
   required_version = ">= 1.10"
@@ -22,7 +22,7 @@ terraform {
     }
   }
 
-  # State lives in a private R2 bucket created by hand (DEPLOY.md §4.3); the
+  # State lives in a private R2 bucket created by hand (RUNBOOK.md §4.3); the
   # endpoint is in backend.hcl. Credentials come from AWS_ACCESS_KEY_ID /
   # AWS_SECRET_ACCESS_KEY (an R2 token scoped to that one bucket).
   # use_lockfile takes a lock object next to the state, so the laptop and CI
@@ -41,11 +41,11 @@ terraform {
   }
 }
 
-# Token from CLOUDFLARE_API_TOKEN (DEPLOY.md §4.1 lists its permissions).
+# Token from CLOUDFLARE_API_TOKEN (RUNBOOK.md §4.1 lists its permissions).
 provider "cloudflare" {}
 
 # Token from GITHUB_TOKEN: fine-grained, Secrets read/write on the nagaya and
-# app repos (DEPLOY.md §4.2).
+# app repos (RUNBOOK.md §4.2).
 provider "github" {
   owner = var.github_owner
 }

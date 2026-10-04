@@ -16,7 +16,7 @@ sites.yaml ──pnpm render──▶ generated/caddy/Caddyfile        Caddy: ho
 
 On a merge to `master`, CI runs `terraform apply` (DNS, email routing, GitHub
 secrets) and then `nagaya apply` on the box (networks, containers, Caddy,
-crontab). [DEPLOY.md](../DEPLOY.md) has the full runbook. This page explains
+crontab). [RUNBOOK.md](../RUNBOOK.md) has the full runbook. This page explains
 the file.
 
 - [The four ideas](#the-four-ideas)
@@ -85,7 +85,7 @@ The blog repo itself needs what every app here has:
   credentials under the standard names (`PG_USERNAME`, `PG_PASSWORD`,
   `PG_DATABASE`);
 - **frontend:** built with placeholders and filled in at start-up from
-  `runtime-env/<NODE_ENV>.env`, as the futari frontends do (DEPLOY.md §1.7).
+  `runtime-env/<NODE_ENV>.env`, as the futari frontends do (RUNBOOK.md §1.6).
   dmb's `frontend/env.sh`, `runtime-env/` and Dockerfile are the template;
 - **a deploy workflow** copied from `templates/app-repo/futari-dmb.yml` with
   the names changed.
@@ -209,7 +209,7 @@ Each run logs one line and emails when a threshold is crossed:
 | *(always on)* | the kernel OOM-killed anything since the previous run |
 
 You get one email when a problem starts, a reminder every `repeat_hours` while
-it lasts, and one when it clears. DEPLOY.md "Day-2 → Memory" covers what to
+it lasts, and one when it clears. RUNBOOK.md "Day-2 → Memory" covers what to
 do when one arrives.
 
 #### `cloudflare-ranges`
@@ -256,7 +256,7 @@ One Postgres container, also named `<name>`, from `postgres:<version>-alpine`.
 
 | Key | Meaning |
 |---|---|
-| `version` | Major version. **18**, matching Nooklet. Changing it is a dump-and-restore, not an edit; see DEPLOY.md "Upgrading Postgres". |
+| `version` | Major version. **18**, matching Nooklet. Changing it is a dump-and-restore, not an edit; see RUNBOOK.md "Upgrading Postgres". |
 | `shared_buffers` | Postgres's own cache. 256MB suits a 4 GB box running everything else too. |
 | `max_connections` | Total across every database. Each backend's pool counts against it. |
 | `tunnel_port` | The port on the box's `127.0.0.1` where this Postgres is published, for an SSH tunnel from your laptop. Two Postgres resources can't share one; render refuses. |
@@ -265,7 +265,7 @@ One Postgres container, also named `<name>`, from `postgres:<version>-alpine`.
 - **Networking:** apps reach Postgres over the Docker networks on its own port
   5432. Every container has its own address there, so ports never clash. The
   only port on the **box** is `tunnel_port`, bound to `127.0.0.1`, which you
-  reach through an SSH tunnel (DEPLOY.md "Connect a database client"). Redis
+  reach through an SSH tunnel (RUNBOOK.md "Connect a database client"). Redis
   publishes no port at all: nothing outside Docker needs it, and you inspect
   it with `docker exec <name> redis-cli`.
 - **Data:** a named volume `<name>-data`, mounted at `/var/lib/postgresql`. That
@@ -312,7 +312,7 @@ apps:
 ### `domain`
 The Cloudflare zone. Terraform creates the zone, and with it the two
 nameservers to set at the registrar. Adding a **new** domain is therefore a new
-app plus a one-time nameserver change (DEPLOY.md "Adding a whole new domain").
+app plus a one-time nameserver change (RUNBOOK.md "Adding a whole new domain").
 
 ### `defaults`
 Any of these keys, applied to every site of the app that does not set its own:
@@ -356,7 +356,7 @@ email:
 
 | `mode` | DNS it produces | Use it |
 |---|---|---|
-| `namecheap` | Namecheap's five `eforward*` MX records and its SPF | Only until the zone is active on Cloudflare (DEPLOY.md §4.10). It mirrors today. |
+| `namecheap` | Namecheap's five `eforward*` MX records and its SPF | Only until the zone is active on Cloudflare (RUNBOOK.md §4.10). It mirrors today. |
 | `cloudflare-pending` | No MX, no SPF. Terraform creates `forward_to` as an Email Routing destination, and Cloudflare emails it a verification link | For the few minutes while you verify the inbox and enable Email Routing in the dashboard, choosing that existing destination. Cloudflare refuses to enable routing while foreign MX records exist. |
 | `cloudflare` | Nothing in DNS. Cloudflare adds and locks its own MX/SPF/DKIM when Email Routing is enabled. Terraform creates the routing rules. | Steady state. |
 
@@ -515,7 +515,7 @@ comes from the app's own repo, baked into its image:
 - **Frontends** (all five) are built with placeholders, and `env.sh` fills
   in their URL and title at container start from plaintext
   `runtime-env/production.env` or `runtime-env/staging.env`, picked by
-  `NODE_ENV` the same way (DEPLOY.md §1.5 for ofuma, §1.7 for futari). One
+  `NODE_ENV` the same way (RUNBOOK.md §1.4 for ofuma, §1.6 for futari). One
   image serves both environments, and the deploy workflows pass no build
   arguments.
 
@@ -533,7 +533,7 @@ exactly these names. nagaya reads them there on every deploy:
 | `REDIS_PASSWORD` | only if the site's Redis has `password_env`: checking it matches the Redis server |
 
 There is no option to rename them. An app that uses other names renames them
-in its own repo (doca did, DEPLOY.md §1.6). The registry stays free of app
+in its own repo (doca did, RUNBOOK.md §1.5). The registry stays free of app
 details. A wrong or missing name surfaces at deploy, with a message naming the
 key and the file.
 
@@ -544,7 +544,7 @@ Nagaya splits it into one file per environment,
 `keys/<app>-<site>-<service>.<production|staging>.key`, each holding a single
 `DOTENV_PRIVATE_KEY_<ENV>=…` line. That's what the container gets through
 `env_file`, so a staging container is never handed the production key. It is
-**not** the app's settings: those stay encrypted inside the image. DEPLOY.md
+**not** the app's settings: those stay encrypted inside the image. RUNBOOK.md
 §3.4 has the full table.
 
 ---
@@ -560,7 +560,7 @@ Nagaya splits it into one file per environment,
 | Image | `ofuma-main-backend:<sha from master>` | the **same image name**, `<sha from stg>` |
 | Env | `NODE_ENV=production`: the backend decrypts `/app/.env.production` with `DOTENV_PRIVATE_KEY_PRODUCTION`; the frontend loads `runtime-env/production.env` | `NODE_ENV=staging`: the backend's `.env.staging` with `DOTENV_PRIVATE_KEY_STAGING`; the frontend's `runtime-env/staging.env` |
 | Database | `ofuma` | `ofuma_stg` |
-| Redis | same instance | same instance. **The app must namespace itself** with a different `REDIS_DB` and key prefix (DEPLOY.md §1.3), or staging workers would take production's jobs |
+| Redis | same instance | same instance. **The app must namespace itself** with a different `REDIS_DB` and key prefix (RUNBOOK.md §1.3), or staging workers would take production's jobs |
 | DNS | `origin` | `stg_origin` (or `origin`) |
 | Cron | yes | none |
 | Running | always | **off by default** |
@@ -639,7 +639,7 @@ You never write these. They are fixed functions of the registry:
 - **Nothing publishes a port except Caddy (443) and Postgres (127.0.0.1:`tunnel_port`).**
   Docker-published ports bypass ufw, because their traffic is DNATed through
   FORWARD, not INPUT. So `generated/firewall.sh` also restricts Caddy's 443
-  in Docker's own `DOCKER-USER` chain (DEPLOY.md §2.9). Any new `ports:` entry
+  in Docker's own `DOCKER-USER` chain (RUNBOOK.md §2.9). Any new `ports:` entry
   would need the same treatment; keeping the list to two is what makes the
   firewall mean something.
 
@@ -691,7 +691,7 @@ CI runs `pnpm render:check` and fails if `generated/` is not exactly what
      `PG_USERNAME`/`PG_PASSWORD`;
    - the frontend has `runtime-env/staging.env` with the `-stg` URLs;
    - if the site's Redis is shared with production (as ofuma's is), the app
-     namespaces itself with `REDIS_DB` and `REDIS_PREFIX` (DEPLOY.md §1.3).
+     namespaces itself with `REDIS_DB` and `REDIS_PREFIX` (RUNBOOK.md §1.3).
 3. Merge, then push to the repo's staging branch, which deploys staging and
    switches it on.
 

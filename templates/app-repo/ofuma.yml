@@ -1,4 +1,4 @@
-# Copy to ofuma/.github/workflows/deploy-nagaya.yml, on master AND stg (DEPLOY.md §1.4).
+# Copy to ofuma/.github/workflows/deploy-nagaya.yml, on master AND stg (RUNBOOK.md §1.7).
 #
 # ofuma and doca live in one repo and ship from the same branches:
 #   master → projects ofuma-main + ofuma-doca
@@ -10,7 +10,7 @@
 # build minutes do not matter. Then deploys main before doca, because doca's
 # API calls main's backend.
 #
-# Until ofuma is cut over (DEPLOY.md §6.4), keep `push:` commented out.
+# Until ofuma is cut over (RUNBOOK.md §6.4), keep `push:` commented out.
 name: Deploy (nagaya)
 
 on:

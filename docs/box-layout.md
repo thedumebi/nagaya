@@ -28,7 +28,7 @@ The directories that matter here:
   under `/srv/nagaya`, apart from the data in Docker volumes.
 
 It's a convention, not a technical requirement. Changing it means changing
-`ROOT` in `render/constants.ts`, and the paths in `bin/nagaya` and DEPLOY.md.
+`ROOT` in `render/constants.ts`, and the paths in `bin/nagaya` and RUNBOOK.md.
 
 ## Inside `/srv`
 

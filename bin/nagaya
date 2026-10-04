@@ -17,7 +17,7 @@
 #   nagaya psql <db>                 interactive psql as the superuser
 #   nagaya core <compose args>       docker compose on core.yml, with nagaya's secrets loaded
 #   nagaya login                     docker login to GHCR (once per box)
-#   nagaya ssh-dispatch              forced command for the CI key; see DEPLOY.md §2.10
+#   nagaya ssh-dispatch              forced command for the CI key; see RUNBOOK.md §2.10
 #
 # Secrets come from nagaya's own encrypted .env.production, decrypted by
 # dotenvx with /srv/nagaya/.env.keys. The script re-executes itself under
@@ -54,13 +54,13 @@ usage_for() { # <command>
   exit 1
 }
 
-require_command() { command -v "$1" >/dev/null || die "$1 is not installed (DEPLOY.md §2.5–§2.7)"; }
+require_command() { command -v "$1" >/dev/null || die "$1 is not installed (RUNBOOK.md §2.5–§2.7)"; }
 
 # Re-run this script under `dotenvx run`, once, so nagaya's secrets
 # (PG_SUPERUSER_PASSWORD, R2_*, BREVO_API_KEY, …) are plain variables.
 load_secrets() {
   if [[ -z "${NAGAYA_SECRETS_LOADED:-}" ]]; then
-    [[ -f "$ROOT/.env.keys" ]] || die "$ROOT/.env.keys is missing (DEPLOY.md §3.4)"
+    [[ -f "$ROOT/.env.keys" ]] || die "$ROOT/.env.keys is missing (RUNBOOK.md §3.4)"
     export NAGAYA_SECRETS_LOADED=1
     exec dotenvx run --quiet -f "$ROOT/.env.production" -fk "$ROOT/.env.keys" -- "$0" "$@"
   fi
@@ -139,7 +139,7 @@ split_keys() {
     [[ -n "$key_name" ]] || continue
     local keys_source="$KEYS_DIR/$key_name.keys"
     local key_variable="DOTENV_PRIVATE_KEY_${node_env^^}"
-    [[ -f "$keys_source" ]] || die "missing $keys_source — copy the app's .env.keys there (DEPLOY.md §3.4)"
+    [[ -f "$keys_source" ]] || die "missing $keys_source — copy the app's .env.keys there (RUNBOOK.md §3.4)"
     local key_value
     key_value="$(sed -n "s/^${key_variable}=//p" "$keys_source" | tr -d '"' | head -1)"
     [[ -n "$key_value" ]] || die "$keys_source has no $key_variable"
@@ -159,7 +159,7 @@ read_image_env() { # <image:tag> <path-in-image> <key-file> <KEY>...
   # that is how dotenvx decides which DOTENV_PRIVATE_KEY_* to use.
   local env_copy="$temp_dir/${env_path##*/}"
   docker run --rm --entrypoint cat "$image" "$env_path" > "$env_copy" \
-    || { rm -rf "$temp_dir"; die "could not read $env_path from $image (is the env file baked in? DEPLOY.md §1.1)"; }
+    || { rm -rf "$temp_dir"; die "could not read $env_path from $image (is the env file baked in? RUNBOOK.md §1.1)"; }
   local env_key
   for env_key in "$@"; do
     ( set -a; . "$key_file"; set +a; dotenvx get "$env_key" -f "$env_copy" ) \
@@ -203,7 +203,7 @@ ensure_database() { # <project> <tag>
   env_database="$(sed -n 3p <<<"$env_values")"
   [[ -n "$role" && -n "$password" ]] || die "$project_id: $user_key / $password_key are empty in $env_path"
   [[ "$env_database" == "$database" ]] \
-    || die "$project_id: sites.yaml says database \"$database\" but $env_path has $database_key=\"$env_database\". Fix the env file (DEPLOY.md §6) or sites.yaml."
+    || die "$project_id: sites.yaml says database \"$database\" but $env_path has $database_key=\"$env_database\". Fix the env file (RUNBOOK.md §6) or sites.yaml."
   [[ "$role" != postgres ]] || die "$project_id: the app must not log in as the superuser \"postgres\""
 
   # Sites sharing a role (main + doca) must agree on its password, or each
@@ -386,7 +386,7 @@ cmd_apply() {
   for attempt in $(seq 1 10); do container_running caddy && break; sleep 1; done
   if ! container_running caddy; then
     docker logs --tail 20 caddy >&2 || true
-    die "caddy is not running (crash-looping?). The log above says why; most often a missing /srv/nagaya/certs/<domain>.pem or .key (DEPLOY.md §3.6, §4.11)."
+    die "caddy is not running (crash-looping?). The log above says why; most often a missing /srv/nagaya/certs/<domain>.pem or .key (RUNBOOK.md §3.6, §4.11)."
   fi
   docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null \
     || die "the generated Caddyfile does not validate; nothing reloaded"
@@ -412,7 +412,7 @@ cmd_apply() {
   done
 
   # Projects still running that sites.yaml no longer has: stop them. Data,
-  # volumes and the database are left alone; see DEPLOY.md "Removing a site".
+  # volumes and the database are left alone; see RUNBOOK.md "Removing a site".
   local known_projects running_project
   known_projects=" $(plan '[.projects[].id] | join(" ")') nagaya-core "
   for running_project in $(docker ps --format '{{.Label "dev.nagaya.project"}}' | sort -u); do
@@ -728,7 +728,7 @@ check_memory() {
     if (( ${#resolved_lines[@]} )); then printf '%s\n' "${resolved_lines[@]}"; echo; fi
     memory_snapshot
     echo
-    echo "What each number means and what to do: nagaya DEPLOY.md → Day-2 → \"Memory: is the box short?\""
+    echo "What each number means and what to do: nagaya RUNBOOK.md → Day-2 → \"Memory: is the box short?\""
     echo "Thresholds live in sites.yaml under alerts:. Sent by $(hostname) at $(date -u +%FT%TZ)."
   )"
   if send_mail "$subject" "$email_text"; then

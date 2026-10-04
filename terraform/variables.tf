@@ -34,7 +34,7 @@ variable "github_owner" {
 }
 
 variable "nagaya_host" {
-  description = "Public IPv4 of the nagaya box. null until it exists (DEPLOY.md §2.1)."
+  description = "Public IPv4 of the nagaya box. null until it exists (RUNBOOK.md §2.1)."
   type        = string
   default     = null
 }
