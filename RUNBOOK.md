@@ -559,20 +559,24 @@ firewall; Docker gets a daemon config; the repo lives in `/srv/nagaya`.
    | Firmware | **UEFI** | netcup's modern default. |
    | Variant | **Minimal**, not `cloudimg` | `cloudimg` ships cloud-init, which takes over users, SSH keys and `sshd_config` on boot and can quietly undo §2.5–§2.6. |
 
-3. Install form. **Two defaults are wrong for a server:**
+3. Install form. Set what it offers; **the form varies**, and anything it
+   does not offer is set on the box in §2.5:
 
    | Field | Set to | Why |
    |---|---|---|
    | Partitioning | **One large partition with all the disk** | No reason to hand-partition. |
-   | **Timezone** | **UTC** *(default `Europe/Berlin`)* | The backup cron runs at "03:00". On Berlin time that drifts with DST, and at the changeover a cron job is skipped or runs twice. Backup object names use `date -u`. |
-   | **Locale** | **`en_US.UTF-8`** *(default `de_DE.UTF-8`)* | Otherwise errors come back in German. |
    | Hostname | **`nagaya`** | It shows in every prompt. You will have Hetzner, Nooklet and nagaya terminals open at once during the migration. |
-   | Create additional user | **off** | §2.5 creates `deploy`. |
-   | Custom Script | **empty** | |
-   | Send e-mail to me | **on** | The root password arrives this way. |
+   | Timezone / Locale, *if offered* | **UTC** / **`en_US.UTF-8`** | §2.5 sets both either way. |
+   | Create additional user, *if offered* | **off** | §2.5 creates `deploy`. |
+   | Custom Script, *if offered* | **empty** | |
+   | Send e-mail to me | **on** | The root password and the server's SSH host-key fingerprints arrive this way. |
 
-4. Import an SSH key if netcup offers one you stored. That saves the password login in §2.4.
-5. **Install** → SCP password → confirm.
+   There is no step to upload your own SSH key here. The first login is
+   with the emailed root password (§2.4).
+4. **Install** → SCP password → confirm.
+5. When the email arrives, keep it open: it has the **root password** (a new
+   one on every install) and the **SSH host-key fingerprints**, which §2.4
+   checks.
 
 > ⚠️ **Installing an image wipes the disk.** Harmless now. Never press it on a
 > box that holds data.
@@ -594,12 +598,17 @@ After this, `ssh nagaya` and `scp file nagaya:/path` need no flags.
 `IdentitiesOnly yes` stops ssh offering every key in your agent and being
 refused for too many attempts.
 
-**2.4** 💻 **LAPTOP** → 🖥️ **SERVER (as `root`)** — copy the key up and log in:
+**2.4** 💻 **LAPTOP** → 🖥️ **SERVER (as `root`)** — check it is really your
+box, copy the key up and log in:
 ```bash
-ssh-copy-id -i ~/.ssh/nagaya_admin.pub root@152.53.205.203   # the root password from the install email
-ssh -i ~/.ssh/nagaya_admin root@152.53.205.203
+# The box had Debian before §2.2, so drop any host key remembered from then.
+ssh-keygen -R 152.53.205.203
+# The fingerprint the box presents now. Compare it with the ED25519 line in
+# the install email: they must match exactly. If they don't, stop.
+ssh-keyscan -t ed25519 152.53.205.203 2>/dev/null | ssh-keygen -lf -
+ssh-copy-id -i ~/.ssh/nagaya_admin.pub root@152.53.205.203   # answer "yes" to the fingerprint; then the root password from the email
+ssh -i ~/.ssh/nagaya_admin root@152.53.205.203               # no password asked: the key works
 ```
-Skip `ssh-copy-id` if you imported a key in §2.2 step 4.
 
 **2.5** 🖥️ **SERVER (as `root`)** — the deploy user, packages, swap:
 ```bash
@@ -624,7 +633,14 @@ dpkg-reconfigure -plow unattended-upgrades     # answer Yes
 fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
 echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-timedatectl | grep 'Time zone'            # expect UTC; else: timedatectl set-timezone UTC
+# Clock and language. The install form may not have offered these (§2.2).
+# UTC: the backup cron runs at "03:00", and on Berlin time that shifts with
+# DST, skipping or doubling a run at each changeover.
+timedatectl set-timezone UTC
+timedatectl | grep 'Time zone'            # expect: Etc/UTC (UTC, +0000)
+apt install -y locales
+locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
+cat /etc/default/locale                   # expect LANG=en_US.UTF-8 (applies from your next login)
 ```
 
 **2.6** 🖥️ **SERVER (as `root`)** — no passwords, no root over SSH:
