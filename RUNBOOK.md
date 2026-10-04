@@ -1410,8 +1410,12 @@ What it does, in order:
 💻 **LAPTOP** — once 5.2 below passes, let CI run `nagaya apply` on every
 merge from now on:
 ```bash
-gh variable set NAGAYA_BOX_READY --body true -R thedumebi/nagaya
+env -u GITHUB_TOKEN gh variable set NAGAYA_BOX_READY --body true -R thedumebi/nagaya
+gh variable list -R thedumebi/nagaya        # NAGAYA_BOX_READY  true
 ```
+(`env -u GITHUB_TOKEN`: if your shell still has the Terraform credentials
+loaded, `gh` would use that token, which may set secrets but not variables,
+and fail with HTTP 403. Without it, `gh` uses your own login.)
 Until this is set, the Apply workflow does Terraform only and skips the box.
 
 > ⚠️ **If Caddy keeps restarting**, look at `docker logs caddy`. Nine times in
