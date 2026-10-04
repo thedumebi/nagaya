@@ -176,8 +176,13 @@ For **each** of dmb, abm and nihongo (shown for dmb; replace `dmb` throughout):
    unset -f cd pnpm node npm npx 2>/dev/null
    cd ~/Documents/projects/dmb.futari
    docker build --platform linux/amd64 -f dmb/backend/Dockerfile -t dmb-backend:envcheck .
-   docker run --rm --entrypoint sh dmb-backend:envcheck -c 'head -c 300 .env.production; echo'
-   # expect lines like DMB_KEY="encrypted:BD…", no readable secret
+   docker run --rm --platform linux/amd64 --entrypoint sh dmb-backend:envcheck -c '
+     f=.env.production; echo "$PWD/$f"
+     echo "encrypted: $(grep -cE "^[A-Z0-9_]+=\"?encrypted:" $f)"
+     echo "plain: $(grep -E "^[A-Z0-9_]+=" $f | grep -vE "=\"?encrypted:" | cut -d= -f1 | tr "\n" " ")"'
+   # expect: /app/dmb/backend/.env.production, encrypted: <every setting>,
+   # plain: DOTENV_PUBLIC_KEY_PRODUCTION and nothing else.
+   # Prints key NAMES only, never a value.
    docker rmi dmb-backend:envcheck
    ```
 4. Commit and push. Hetzner redeploys as usual; the bind mount still wins there.
@@ -229,29 +234,39 @@ per-visitor rate limiting there too.
 
 ### 1.3 💻 LAPTOP — ofuma: let staging share Redis safely *(needed before the first `stg up`, not before Phase 6)*
 
-ofuma prod and staging share one Redis (`redis-ofuma`). Today the code only
-reads `REDIS_HOST`, so a staging worker would pull **production's** BullMQ jobs
-off the same queues. The app has to namespace itself, using two new env vars:
+ofuma prod and staging share one Redis (`redis-ofuma`). Today every connection
+uses database 0, so a staging worker would pull **production's** BullMQ jobs
+off the same queues. Two settings keep them apart, one new and one existing:
 
-| Var | Effect | prod | stg |
+| Var | Separates | prod | stg |
 |---|---|---|---|
-| `REDIS_DB` | ioredis `db` option: a separate keyspace | `0` | `1` |
-| `REDIS_PREFIX` | BullMQ `prefix`, plus a prefix on pub/sub channel names | *(empty)* | `stg:` |
+| `REDIS_DB` *(new)* | keys and BullMQ queues: the ioredis `db` option, a separate keyspace | `0` (default) | `1` |
+| `EVENT_CHANNEL_PREFIX` *(exists)* | the evaluation-event pub/sub channels | `evaluation:events` (default) | `stg:evaluation:events` |
 
-Both are needed. Redis pub/sub **ignores the DB number**: channels are global
-across all logical databases. So the database number separates keys and
-queues, but only the prefix separates events.
+- **Why `REDIS_DB` covers the queues:** BullMQ keeps everything in keys
+  (lists, sorted sets, streams) and uses no pub/sub, so a separate database
+  is a complete separation. No BullMQ `prefix` is needed.
+- **Why the channels need their own setting:** Redis pub/sub **ignores the
+  database number**; channels are shared across the whole server. ofuma's
+  event emitter and subscriber already build every channel name from
+  `EVENT_CHANNEL_PREFIX`, so staging only has to set a different value (§7.3).
+  It can't be injected on the connection instead: ioredis' `keyPrefix` skips
+  pub/sub channels, and BullMQ rejects connections that set it.
 
-Files to change (doca reads the same `REDIS_DB` / `REDIS_PREFIX` names from its own env, after §1.5):
+The code change, done on branch `nagaya/doca-standard-db-env` (on top of §1.5,
+whose doca file it shares), uncommitted:
 
-- `ofuma/shared/src/types/env.ts`: add both, defaulting to `0` and `''`
-- `ofuma/shared/src/utils/redis.ts`: pass `db`
-- `ofuma/shared/src/services/queue/queue-manager.ts`: pass `db`, and `prefix` to every `Queue` / `Worker`
-- `ofuma/shared/src/services/events/event-emitter.ts` and `event-subscriber.ts`: `db`, and prefix every channel name
-- `doca/api/src/workers/generation-worker.ts`: the doca equivalents
+- `ofuma/shared/src/types/env.ts` and `doca/shared/src/env.ts`: `REDIS_DB`, default `0`
+- `db: env.REDIS_DB` on every Redis connection: `ofuma/shared/src/utils/redis.ts`,
+  `services/queue/queue-manager.ts`, `services/events/event-emitter.ts`,
+  `event-subscriber.ts`, and `doca/api/src/workers/generation-worker.ts`.
+  doca uses no pub/sub, so it needs nothing else.
 
-With the defaults, production behaviour is byte-for-byte unchanged, so this
-can merge any time.
+Checked 2026-10-04: ofuma/shared, ofuma/backend and doca/shared typecheck clean;
+doca/api has the same 13 errors `stg` already had (stale imports, none in these
+lines); ofuma's tests pass. With the defaults, production behaves exactly as
+before, so this can merge any time. Commit it together with §1.5, or as its own
+commit from the same branch.
 
 ### 1.4 💻 LAPTOP — ofuma: the frontends read their runtime values from their own repo
 
@@ -1717,7 +1732,7 @@ dotenvx set PG_PASSWORD "$STGPW"  -f $E
 dotenvx set PG_DATABASE ofuma_stg -f $E
 dotenvx set REDIS_PASSWORD "$REDISPW" -f $E           # was empty: staging's own Redis had none
 dotenvx set REDIS_DB 1 -f $E
-dotenvx set REDIS_PREFIX "stg:" -f $E
+dotenvx set EVENT_CHANNEL_PREFIX "stg:evaluation:events" -f $E   # pub/sub ignores REDIS_DB (§1.3)
 dotenvx set TRUSTED_PROXY_CIDRS "172.16.0.0/12" -f $E
 dotenvx set ALLOWED_ORIGINS "https://stg.ofuma.ai,https://doca-stg.ofuma.ai" -f $E
 dotenvx set OFUMA_DOCA_URL "https://doca-stg.ofuma.ai" -f $E
@@ -1730,7 +1745,6 @@ dotenvx set PG_PASSWORD "$STGPW"   -f $E
 dotenvx set PG_DATABASE ofuma_stg  -f $E
 dotenvx set REDIS_PASSWORD "$REDISPW" -f $E
 dotenvx set REDIS_DB 1 -f $E
-dotenvx set REDIS_PREFIX "stg:" -f $E
 dotenvx set ALLOWED_ORIGINS    "https://doca-stg.ofuma.ai" -f $E
 dotenvx set DOCA_API_URL       "https://doca-stg.ofuma.ai/api" -f $E
 dotenvx set DOCA_OFUMA_URL     "https://stg.ofuma.ai" -f $E
@@ -1772,10 +1786,12 @@ While staging is down, they show the "Staging is off" page.
    ```bash
    # the password is redis-server's argument, not an env var in the container, so pass it from nagaya's env
    dotenvx run --quiet -f /srv/nagaya/.env.production -fk /srv/nagaya/.env.keys -- sh -c \
-     'docker exec redis-ofuma redis-cli -a "$REDIS_PASSWORD_OFUMA" --no-auth-warning -n 1 --scan --pattern "stg:*" | head'
+     'for db in 0 1; do echo "DB $db: $(docker exec redis-ofuma redis-cli -a "$REDIS_PASSWORD_OFUMA" --no-auth-warning -n $db --scan --pattern "bull:*" | wc -l) BullMQ keys"; done
+      docker exec redis-ofuma redis-cli -a "$REDIS_PASSWORD_OFUMA" --no-auth-warning pubsub channels "*evaluation:events*"'
    ```
-   That should list staging's BullMQ keys in DB 1. DB 0 should hold none with
-   the `stg:` prefix.
+   Expect BullMQ keys in **both** DB 0 (production) and DB 1 (staging), and
+   among the channels, staging's `stg:evaluation:events:…` next to
+   production's `evaluation:events:…`.
 
 ### 7.6 Day to day
 
@@ -2227,7 +2243,7 @@ firewall, compose ports or Caddy.
 | **F** | The WAF: `curl -s -o /dev/null -w '%{http_code}' -A nuclei/3 https://dmb.futari.live/` and `…/.env` | 403 from Cloudflare |
 | **G** | Deploy path: push a trivial commit to each repo | the workflow goes green; `nagaya status` shows the new SHA |
 | **H** | Rollback path: `nagaya deploy futari-nihongo <a SHA whose backend crashes on start>`, for example a commit with a deliberate `process.exit(1)` | the health check fails, then a rollback to the previous tag, and the site stays up |
-| **I** | Staging: `nagaya stg up ofuma`, a job on staging, `nagaya stg down ofuma` | the job runs only on staging (prefix `stg:` in Redis DB 1); after down, the "Staging is off" page shows and ~250 MB is freed |
+| **I** | Staging: `nagaya stg up ofuma`, a job on staging, `nagaya stg down ofuma` | the job runs only on staging (its queue is in Redis DB 1); after down, the "Staging is off" page shows and ~250 MB is freed |
 | **J** | Backups: `nagaya drill <db>` for every database | passes |
 | **K** | Alerts: `nagaya alerts --test`; then, to see a real one, temporarily set `mem_available_mb` above the current value, merge, wait 5 min, and set it back | the test arrives; a real alert arrives, then "resolved" after reverting |
 | **L** | Reboot: `sudo reboot` | every site comes back on its own; `iptables -S DOCKER-USER` shows the NAGAYA-CF rule; E still passes |

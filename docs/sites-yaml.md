@@ -560,7 +560,7 @@ Nagaya splits it into one file per environment,
 | Image | `ofuma-main-backend:<sha from master>` | the **same image name**, `<sha from stg>` |
 | Env | `NODE_ENV=production`: the backend decrypts `/app/.env.production` with `DOTENV_PRIVATE_KEY_PRODUCTION`; the frontend loads `runtime-env/production.env` | `NODE_ENV=staging`: the backend's `.env.staging` with `DOTENV_PRIVATE_KEY_STAGING`; the frontend's `runtime-env/staging.env` |
 | Database | `ofuma` | `ofuma_stg` |
-| Redis | same instance | same instance. **The app must namespace itself** with a different `REDIS_DB` and key prefix (RUNBOOK.md §1.3), or staging workers would take production's jobs |
+| Redis | same instance | same instance. **The app must namespace itself** with a different `REDIS_DB`, plus its own channel names if it uses pub/sub (RUNBOOK.md §1.3), or staging workers would take production's jobs |
 | DNS | `origin` | `stg_origin` (or `origin`) |
 | Cron | yes | none |
 | Running | always | **off by default** |
@@ -691,7 +691,7 @@ CI runs `pnpm render:check` and fails if `generated/` is not exactly what
      `PG_USERNAME`/`PG_PASSWORD`;
    - the frontend has `runtime-env/staging.env` with the `-stg` URLs;
    - if the site's Redis is shared with production (as ofuma's is), the app
-     namespaces itself with `REDIS_DB` and `REDIS_PREFIX` (RUNBOOK.md §1.3).
+     namespaces itself with `REDIS_DB`, and with different channel names for any pub/sub, which ignores the database number (RUNBOOK.md §1.3).
 3. Merge, then push to the repo's staging branch, which deploys staging and
    switches it on.
 
