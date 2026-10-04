@@ -7,4 +7,4 @@ github_owner          = "thedumebi"
 
 # Filled in at RUNBOOK.md §4.4, once the box exists (Phase 2):
 nagaya_host        = 152.53.205.203
-nagaya_known_hosts = null # "159.195.x.x ssh-ed25519 AAAA…"
+nagaya_known_hosts = 152.53.205.203 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINRHmAII8bkEUxSOgOnHJ08auRM5Np4PIEX8arVHQqdx

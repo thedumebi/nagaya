@@ -958,6 +958,10 @@ ssh nagaya 'chmod 600 /srv/nagaya/.env.keys /srv/nagaya/keys/*.keys && ls -l /sr
 | `ofuma/ofuma/backend/.env.keys` | `keys/ofuma-main-backend.keys` | ofuma's production **and** staging keys |
 | `ofuma/doca/api/.env.keys` | `keys/ofuma-doca-doca-api.keys` | doca's production and staging keys |
 
+**Copy each `.env.keys` whole, as it is. Don't split it by hand.** A file
+may hold more than one key (ofuma's has production and staging; abm's also
+has the key for local `.env`), and nagaya picks out the one it needs.
+
 nagaya never mounts these files into a container. On every deploy it writes
 `keys/<name>.production.key` and `keys/<name>.staging.key`, each holding the
 one key for that environment. So a staging container is never handed the
