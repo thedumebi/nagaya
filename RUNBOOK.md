@@ -41,6 +41,15 @@ silently kills compound commands.
 > ```
 > This does **not** apply to 🖥️ SERVER or HETZNER commands.
 
+> ⚠️ **Comments in pasted commands.** Most blocks here end lines with
+> `# expect: …`. In zsh that is only a comment if `interactivecomments` is on;
+> it is **off by default**, and then the `#` and every word after it are
+> passed to the command as arguments (`head: #: No such file or directory`).
+> Turn it on once, for good:
+> ```bash
+> echo 'setopt interactivecomments' >> ~/.zshrc && source ~/.zshrc
+> ```
+
 > **Node 24 for this repo.** `nagaya` uses Node 24 (`.nvmrc` says `24`), which
 > runs the TypeScript renderer directly with no build step. The app repos stay
 > on their own versions.
@@ -1333,14 +1342,17 @@ and 4.10.2 is already done.
 
 ### 4.11 💻 LAPTOP → 🖥️ — the origin certificates onto the box
 
-Only once **both** zones show `active` (§4.9). Move the CSRs out of
-`pending/`; the push makes CI request the two certificates:
+Per zone, once **that** zone shows `active` (§4.9). Move its CSR out of
+`pending/`; the push makes CI request the certificate:
 ```bash
 unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya
-git mv terraform/csr/pending/*.csr terraform/csr/
-git commit -m "Origin CA certificates: zones are active" && git push
+git pull
+git mv terraform/csr/pending/futari.live.csr terraform/csr/
+git commit -m "Origin CA certificate: futari.live is active" && git push
 ```
+(The same for `ofuma.ai` once it is active.) Each fetched file must start with
+`-----BEGIN CERTIFICATE-----`.
 Wait for the Apply run to go green (Terraform apply: `2 added`), then fetch
 the certificates:
 ```bash
@@ -1348,8 +1360,10 @@ unset -f cd pnpm node npm npx 2>/dev/null
 cd ~/Documents/projects/nagaya/terraform
 set -a; . ~/.config/nagaya/tf.env; set +a
 for d in futari.live ofuma.ai; do
-  terraform output -json origin_certificates | jq -r --arg d "$d" '.[$d]' > "/tmp/$d.pem"
-  head -1 "/tmp/$d.pem"                                   # -----BEGIN CERTIFICATE-----
+  # jq -e fails on null: no certificate yet means nothing is copied.
+  terraform output -json origin_certificates | jq -er --arg d "$d" '.[$d]' > "/tmp/$d.pem" \
+    || { echo "✗ no certificate for $d yet: is its zone active, its CSR out of pending/, and the Apply run green?"; rm -f "/tmp/$d.pem"; continue; }
+  head -1 "/tmp/$d.pem"
   scp "/tmp/$d.pem" "nagaya:/srv/nagaya/certs/$d.pem" && rm "/tmp/$d.pem"
 done
 ```

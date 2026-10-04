@@ -71,7 +71,11 @@ test('A records are keyed by name, so a cutover updates in place', () => {
   const model = loadModel(SITES_YAML)
   const futariZone = model.zones.find(zone => zone.domain === 'futari.live')!
   assert.ok(futariZone.records.some(record => record.key === 'A dmb.futari.live'))
-  assert.equal(futariZone.records.filter(record => record.type === 'MX').length, 5)
+  // Namecheap's five eforward MX exist only while the zone's email is in
+  // namecheap mode; under Cloudflare Email Routing its MX are Cloudflare's
+  // own locked records, which Terraform never manages.
+  const expectedMx = futariZone.email?.mode === 'namecheap' ? 5 : 0
+  assert.equal(futariZone.records.filter(record => record.type === 'MX').length, expectedMx)
 })
 
 test('postgres is published on its own tunnel_port, and two cannot share one', () => {
