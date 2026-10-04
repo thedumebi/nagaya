@@ -195,6 +195,11 @@ export function buildModel(registry: Registry): Model {
           siteServiceKeys: Object.keys(site.services!),
         }))
 
+        const cronNames = (site.cron ?? []).map(cronConfig => cronConfig.name)
+        const repeatedCronName = cronNames.find((cronName, index) => cronNames.indexOf(cronName) !== index)
+        if (repeatedCronName)
+          fail(location, `two crons are named "${repeatedCronName}"; a cron's id is <project>-<name>, so names must differ within a site`)
+
         const crons: Cron[] = isStaging
           ? [] // staging copies get no scheduled jobs
           : (site.cron ?? []).map((cronConfig) => {

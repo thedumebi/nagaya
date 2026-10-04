@@ -1,0 +1,809 @@
+#!/usr/bin/env bash
+#
+# nagaya — runs on the box, as the deploy user. Reads generated/plan.json
+# (written by `pnpm render` from sites.yaml) and makes Docker match it.
+#
+#   nagaya apply                     reconcile everything with sites.yaml
+#   nagaya prepare <project> <tag>   pull images, create the role + database; start nothing
+#   nagaya deploy  <project> <tag>   prepare, start, health-check; roll back on failure
+#   nagaya rollback <project>        redeploy the previous tag
+#   nagaya stg up|down <app>         start / stop every staging project of an app
+#   nagaya restore <db> <file|latest> [--replace]
+#   nagaya backup                    dump every database to R2 (cron runs this nightly)
+#   nagaya drill <db>                restore the newest backup into a scratch DB and compare
+#   nagaya cron <id>                 run one scheduled call from sites.yaml
+#   nagaya alerts [--test]           check memory/swap/disk; email if needed (cron)
+#   nagaya status                    what is running, tags, staging state, memory
+#   nagaya psql <db>                 interactive psql as the superuser
+#   nagaya core <compose args>       docker compose on core.yml, with nagaya's secrets loaded
+#   nagaya login                     docker login to GHCR (once per box)
+#   nagaya ssh-dispatch              forced command for the CI key; see DEPLOY.md §2.10
+#
+# Secrets come from nagaya's own encrypted .env.production, decrypted by
+# dotenvx with /srv/nagaya/.env.keys. The script re-executes itself under
+# `dotenvx run` once, so every command below sees them as plain variables.
+
+set -Eeuo pipefail
+
+ROOT=/srv/nagaya
+PLAN_FILE="$ROOT/generated/plan.json"
+STATE_DIR="$ROOT/state"
+KEYS_DIR="$ROOT/keys"
+LOGS_DIR="$ROOT/logs"
+TAGS_DIR="$STATE_DIR/tags"
+STAGING_STATE_DIR="$STATE_DIR/stg"
+ROLES_DIR="$STATE_DIR/roles"
+ALERTS_DIR="$STATE_DIR/alerts"
+
+# ───────────────────────────── helpers ─────────────────────────────
+
+die()  { printf '✗ %s\n' "$*" >&2; exit 1; }
+info() { printf '• %s\n' "$*"; }
+ok()   { printf '✓ %s\n' "$*"; }
+warn() { printf '! %s\n' "$*" >&2; }
+
+usage() { sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# Wrong arguments for one command: print just that command's line from the
+# header above, not the whole help.
+usage_for() { # <command>
+  local usage_line
+  usage_line="$(sed -n '3,20p' "$0" | sed 's/^# *//' | grep -E "^nagaya $1( |$)" || true)"
+  [[ -n "$usage_line" ]] || usage 1
+  printf 'usage: %s\n' "$usage_line" >&2
+  exit 1
+}
+
+require_command() { command -v "$1" >/dev/null || die "$1 is not installed (DEPLOY.md §2.5–§2.7)"; }
+
+# Re-run this script under `dotenvx run`, once, so nagaya's secrets
+# (PG_SUPERUSER_PASSWORD, R2_*, BREVO_API_KEY, …) are plain variables.
+load_secrets() {
+  if [[ -z "${NAGAYA_SECRETS_LOADED:-}" ]]; then
+    [[ -f "$ROOT/.env.keys" ]] || die "$ROOT/.env.keys is missing (DEPLOY.md §3.4)"
+    export NAGAYA_SECRETS_LOADED=1
+    exec dotenvx run --quiet -f "$ROOT/.env.production" -fk "$ROOT/.env.keys" -- "$0" "$@"
+  fi
+}
+
+# One nagaya command at a time: a deploy from CI and an apply from a merge
+# must never interleave. Waits up to 15 minutes for the other to finish.
+take_lock() {
+  mkdir -p "$STATE_DIR"
+  exec 9>"$STATE_DIR/.lock"
+  flock -w 900 9 || die "another nagaya command has held the lock for 15 minutes"
+}
+
+# jq against plan.json, raw output.
+plan() { jq -r "$@" "$PLAN_FILE"; }
+
+project_exists() { plan --arg id "$1" 'any(.projects[]; .id == $id)' | grep -qx true; }
+
+# One field of one project: project_field ofuma-main .network
+project_field() { jq -r --arg id "$1" ".projects[] | select(.id == \$id) | $2" "$PLAN_FILE"; }
+
+compose_core() { docker compose -f "$ROOT/generated/compose/core.yml" "$@"; }
+
+# docker compose for one project, with its deployed image tag.
+compose_project() {
+  local project_id="$1"; shift
+  local tag_file="$TAGS_DIR/$project_id.env"
+  [[ -f "$tag_file" ]] || die "$project_id has never been deployed (no $tag_file)"
+  docker compose --env-file "$tag_file" -f "$ROOT/$(project_field "$project_id" .compose)" "$@"
+}
+
+current_tag() { [[ -f "$TAGS_DIR/$1.env" ]] && sed -n 's/^TAG=//p' "$TAGS_DIR/$1.env"; }
+
+is_valid_tag() { [[ "$1" =~ ^[0-9a-f]{7,40}$|^v[0-9][0-9A-Za-z.-]*$ ]]; }
+
+container_running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == true ]]; }
+
+staging_state() { cat "$STAGING_STATE_DIR/$1" 2>/dev/null || echo down; }
+
+# ───────────────────────────── networks ─────────────────────────────
+
+ensure_network() {
+  docker network inspect "$1" >/dev/null 2>&1 || { docker network create "$1" >/dev/null; info "created network $1"; }
+}
+
+# Attach each resource container (Postgres, Redis) to a project's network
+# under the hostnames the project's code uses for it. Done outside compose on
+# purpose: putting every project network into core.yml would make compose
+# recreate Postgres whenever a site is added. Idempotent, and re-run by every
+# apply, because recreating a resource container (an image bump) drops these.
+attach_resources() {
+  local project_id="$1" network
+  network="$(project_field "$project_id" .network)"
+  ensure_network "$network"
+  while IFS=$'\t' read -r container aliases; do
+    [[ -n "$container" ]] || continue
+    if docker inspect -f '{{json .NetworkSettings.Networks}}' "$container" | jq -e --arg network "$network" 'has($network)' >/dev/null; then
+      continue
+    fi
+    local connect_args=() alias
+    for alias in $aliases; do connect_args+=(--alias "$alias"); done
+    docker network connect "${connect_args[@]}" "$network" "$container"
+    info "attached $container to $network as: $aliases"
+  done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .attach[] | [.container, (.aliases | join(" "))] | @tsv' "$PLAN_FILE")
+}
+
+# ───────────────────────────── keys ─────────────────────────────
+
+# keys/<app>-<site>-<service>.keys is the app's .env.keys, copied up from the
+# laptop. Each container gets keys/<…>.<env>.key holding ONLY the key for its
+# own environment, so a staging container never sees the production key.
+split_keys() {
+  local project_id="$1"
+  umask 077
+  while IFS=$'\t' read -r key_name node_env key_file; do
+    [[ -n "$key_name" ]] || continue
+    local keys_source="$KEYS_DIR/$key_name.keys"
+    local key_variable="DOTENV_PRIVATE_KEY_${node_env^^}"
+    [[ -f "$keys_source" ]] || die "missing $keys_source — copy the app's .env.keys there (DEPLOY.md §3.4)"
+    local key_value
+    key_value="$(sed -n "s/^${key_variable}=//p" "$keys_source" | tr -d '"' | head -1)"
+    [[ -n "$key_value" ]] || die "$keys_source has no $key_variable"
+    printf '%s=%s\n' "$key_variable" "$key_value" > "$key_file.tmp" && mv "$key_file.tmp" "$key_file"
+  done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .services[] | select(.dotenvx) | [.dotenvx.keyName, .nodeEnv, .dotenvx.keyFile] | @tsv' "$PLAN_FILE")
+}
+
+# ───────────────────────────── databases ─────────────────────────────
+
+# Print the decrypted value of each given key from the encrypted env file
+# baked into an image, one per line. The app's env file is the single source
+# of truth for its role's name and password; nagaya never keeps its own copy.
+read_image_env() { # <image:tag> <path-in-image> <key-file> <KEY>...
+  local image="$1" env_path="$2" key_file="$3"; shift 3
+  local temp_dir; temp_dir="$(mktemp -d)"
+  # The copy keeps the original file name (.env.production / .env.staging):
+  # that is how dotenvx decides which DOTENV_PRIVATE_KEY_* to use.
+  local env_copy="$temp_dir/${env_path##*/}"
+  docker run --rm --entrypoint cat "$image" "$env_path" > "$env_copy" \
+    || { rm -rf "$temp_dir"; die "could not read $env_path from $image (is the env file baked in? DEPLOY.md §1.1)"; }
+  local env_key
+  for env_key in "$@"; do
+    ( set -a; . "$key_file"; set +a; dotenvx get "$env_key" -f "$env_copy" ) \
+      || { rm -rf "$temp_dir"; die "could not decrypt $env_key from $image:$env_path"; }
+  done
+  rm -rf "$temp_dir"
+}
+
+to_base64() { printf '%s' "$1" | base64 -w0; }
+
+# The first service of a project whose env holds the credentials, as JSON.
+credentials_service() { # <project> <jq condition>
+  jq -c --arg id "$1" ".projects[] | select(.id == \$id) | .services[] | select($2)" "$PLAN_FILE" | head -1
+}
+
+# Create the role (or reset its password to what the app's env says) and the
+# database owned by it. Values travel base64-encoded, so no quoting can break
+# the SQL, and never on a command line, so they never show up in `ps`.
+ensure_database() { # <project> <tag>
+  local project_id="$1" tag="$2"
+  local database postgres_container
+  database="$(project_field "$project_id" '.database.name // empty')"
+  [[ -n "$database" ]] || return 0
+  postgres_container="$(project_field "$project_id" .database.resource)"
+
+  local service_json
+  service_json="$(credentials_service "$project_id" '.credentials and .dotenvx')"
+  [[ -n "$service_json" ]] || die "$project_id has a database but no service with credentials"
+  local image env_path key_file user_key password_key database_key
+  image="$(jq -r .image <<<"$service_json"):$tag"
+  env_path="$(jq -r .dotenvx.path <<<"$service_json")"
+  key_file="$(jq -r .dotenvx.keyFile <<<"$service_json")"
+  user_key="$(jq -r .credentials.pgUser <<<"$service_json")"
+  password_key="$(jq -r .credentials.pgPassword <<<"$service_json")"
+  database_key="$(jq -r .credentials.pgDatabase <<<"$service_json")"
+
+  local env_values role password env_database
+  env_values="$(read_image_env "$image" "$env_path" "$key_file" "$user_key" "$password_key" "$database_key")"
+  role="$(sed -n 1p <<<"$env_values")"
+  password="$(sed -n 2p <<<"$env_values")"
+  env_database="$(sed -n 3p <<<"$env_values")"
+  [[ -n "$role" && -n "$password" ]] || die "$project_id: $user_key / $password_key are empty in $env_path"
+  [[ "$env_database" == "$database" ]] \
+    || die "$project_id: sites.yaml says database \"$database\" but $env_path has $database_key=\"$env_database\". Fix the env file (DEPLOY.md §6) or sites.yaml."
+  [[ "$role" != postgres ]] || die "$project_id: the app must not log in as the superuser \"postgres\""
+
+  # Sites sharing a role (main + doca) must agree on its password, or each
+  # deploy would silently reset it and lock the other one out. Only a short
+  # hash of the password is kept, never the password.
+  mkdir -p "$ROLES_DIR"
+  local password_fingerprint known_fingerprint
+  password_fingerprint="$(printf '%s' "$password" | sha256sum | cut -c1-16)"
+  known_fingerprint="$(cat "$ROLES_DIR/$role" 2>/dev/null || true)"
+  if [[ -n "$known_fingerprint" && "$known_fingerprint" != "$password_fingerprint" && "${NAGAYA_ROTATE:-}" != "$role" ]]; then
+    die "$project_id: role $role already has a different password from another site's env. Make the env files agree, or rotate on purpose with NAGAYA_ROTATE=$role."
+  fi
+
+  docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres >/dev/null <<SQL
+\\set role_name \`printf %s '$(to_base64 "$role")' | base64 -d\`
+\\set role_password \`printf %s '$(to_base64 "$password")' | base64 -d\`
+\\set database_name \`printf %s '$(to_base64 "$database")' | base64 -d\`
+SELECT format('CREATE ROLE %I LOGIN', :'role_name') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role_name') \\gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role_name', :'role_password') \\gexec
+SELECT format('CREATE DATABASE %I OWNER %I', :'database_name', :'role_name') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database_name') \\gexec
+SELECT format('ALTER DATABASE %I OWNER TO %I', :'database_name', :'role_name') \\gexec
+SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'database_name') \\gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database_name', :'role_name') \\gexec
+REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;
+SQL
+  printf '%s' "$password_fingerprint" > "$ROLES_DIR/$role"
+  ok "$project_id: database $database owned by $role, connectable only by $role"
+}
+
+# The app's Redis password must be the one the Redis server was started with.
+check_redis_password() { # <project> <tag>
+  local project_id="$1" tag="$2" password_env
+  password_env="$(project_field "$project_id" '.redis.passwordEnv // empty')"
+  [[ -n "$password_env" ]] || return 0
+  local service_json
+  service_json="$(credentials_service "$project_id" '.credentials.redisPassword')"
+  [[ -n "$service_json" ]] || return 0
+  local redis_key app_password
+  redis_key="$(jq -r .credentials.redisPassword <<<"$service_json")"
+  app_password="$(read_image_env "$(jq -r .image <<<"$service_json"):$tag" \
+    "$(jq -r .dotenvx.path <<<"$service_json")" "$(jq -r .dotenvx.keyFile <<<"$service_json")" "$redis_key")"
+  [[ "$app_password" == "${!password_env:-}" ]] \
+    || die "$project_id: $redis_key in the app env does not match $password_env in nagaya's .env.production"
+}
+
+# ───────────────────────────── health ─────────────────────────────
+
+wait_healthy() { # <project>
+  local project_id="$1" any_failed=0
+  while IFS=$'\t' read -r container port health_path; do
+    [[ -n "$container" ]] || continue
+    local attempt
+    for attempt in $(seq 1 45); do
+      if docker exec "$container" wget -q -O /dev/null "http://127.0.0.1:$port$health_path" 2>/dev/null; then
+        ok "$container $health_path"; continue 2
+      fi
+      container_running "$container" || { warn "$container is not running"; break; }
+      sleep 2
+    done
+    warn "$container never answered $health_path"; any_failed=1
+  done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .services[] | select(.health) | [.container, (.port|tostring), .health] | @tsv' "$PLAN_FILE")
+
+  # End to end through Caddy, on the box: proves routing and the origin cert.
+  # (From the laptop this cannot work: the firewall only admits Cloudflare.)
+  local host status_code
+  while read -r host; do
+    [[ -n "$host" ]] || continue
+    status_code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$host:443:127.0.0.1" "https://$host/" || echo 000)"
+    # Any answer below 500 proves Caddy, the cert and the upstream are wired
+    # up (an API host may well 404 on /). 502 means the upstream is not there.
+    if [[ "$status_code" =~ ^[1-4] ]]; then ok "https://$host → $status_code"; else warn "https://$host → $status_code"; any_failed=1; fi
+  done < <(plan --arg id "$project_id" '.routes[] | select(.project == $id) | .host')
+  return $any_failed
+}
+
+# `docker image prune` only removes untagged images; every old <image>:<sha>
+# stays tagged forever. Remove nagaya-managed images whose tag no project
+# runs or could roll back to (tags/*.env and *.prev.env). Prod and stg share
+# image names, so the keep-list spans every project, not just this one.
+prune_images() {
+  local kept_tags image_repos image_repo
+  kept_tags="$(cat "$TAGS_DIR"/*.env 2>/dev/null | sed -n 's/^TAG=//p' | sort -u | paste -sd'|' -)"
+  [[ -n "$kept_tags" ]] || return 0
+  image_repos="$(plan '[.projects[].services[].image] | unique | .[]')"
+  for image_repo in $image_repos; do
+    docker images --format '{{.Repository}}:{{.Tag}}' "$image_repo" \
+      | grep -vE ":(${kept_tags})\$" \
+      | xargs -r docker rmi >/dev/null 2>&1 || true
+  done
+  docker image prune -f >/dev/null
+}
+
+dump_logs() { # <project>
+  local container
+  for container in $(project_field "$1" '.services[].container'); do
+    printf '\n──── last 40 lines of %s ────\n' "$container" >&2
+    docker logs --tail 40 "$container" >&2 2>&1 || true
+  done
+}
+
+# ───────────────────────────── deploying ─────────────────────────────
+
+cmd_prepare() { # <project> <tag>
+  local project_id="$1" tag="$2"
+  project_exists "$project_id" || die "unknown project $project_id (see generated/plan.json)"
+  is_valid_tag "$tag" || die "tag must be a git SHA or vX.Y.Z, got \"$tag\""
+  ensure_network edge
+  attach_resources "$project_id"
+  split_keys "$project_id"
+  mkdir -p "$TAGS_DIR"
+  printf 'TAG=%s\n' "$tag" > "$TAGS_DIR/$project_id.next.env"
+  docker compose --env-file "$TAGS_DIR/$project_id.next.env" -f "$ROOT/$(project_field "$project_id" .compose)" pull --quiet \
+    || die "pull failed for $project_id:$tag. Did CI push it, and has this box run \`nagaya login\`?"
+  ensure_database "$project_id" "$tag"
+  check_redis_password "$project_id" "$tag"
+}
+
+cmd_deploy() { # <project> <tag>
+  local project_id="$1" tag="$2"
+  cmd_prepare "$project_id" "$tag"
+  local previous_tag; previous_tag="$(current_tag "$project_id" || true)"
+  [[ -n "$previous_tag" && "$previous_tag" != "$tag" ]] && printf 'TAG=%s\n' "$previous_tag" > "$TAGS_DIR/$project_id.prev.env"
+  mv "$TAGS_DIR/$project_id.next.env" "$TAGS_DIR/$project_id.env"
+
+  info "starting $project_id at $tag"
+  compose_project "$project_id" up -d --remove-orphans
+  if [[ "$(project_field "$project_id" .variant)" == stg ]]; then
+    mkdir -p "$STAGING_STATE_DIR"; echo up > "$STAGING_STATE_DIR/$project_id"
+  fi
+
+  if wait_healthy "$project_id"; then
+    prune_images
+    ok "$project_id is live at $tag"
+    return 0
+  fi
+
+  dump_logs "$project_id"
+  if [[ -n "$previous_tag" && "$previous_tag" != "$tag" ]]; then
+    warn "rolling $project_id back to $previous_tag"
+    printf 'TAG=%s\n' "$previous_tag" > "$TAGS_DIR/$project_id.env"
+    compose_project "$project_id" up -d --remove-orphans
+    wait_healthy "$project_id" || warn "the rollback is unhealthy too — look at the logs above"
+  fi
+  die "deploy of $project_id at $tag failed"
+}
+
+cmd_rollback() { # <project>
+  local project_id="$1"
+  [[ -f "$TAGS_DIR/$project_id.prev.env" ]] || die "$project_id has no previous tag recorded"
+  local previous_tag; previous_tag="$(sed -n 's/^TAG=//p' "$TAGS_DIR/$project_id.prev.env")"
+  info "rolling $project_id back to $previous_tag"
+  cmd_deploy "$project_id" "$previous_tag"
+}
+
+# ───────────────────────────── reconciling ─────────────────────────────
+
+cmd_apply() {
+  [[ "${1:-}" == --no-pull ]] || { info "git pull"; git -C "$ROOT" pull --ff-only --quiet; }
+  mkdir -p "$TAGS_DIR" "$STAGING_STATE_DIR" "$LOGS_DIR"
+  chmod 700 "$KEYS_DIR" "$ROOT/certs" 2>/dev/null || true
+
+  local network
+  ensure_network edge
+  for network in $(plan '.projects[] | select(.ownsNetwork) | .network'); do ensure_network "$network"; done
+
+  info "core: caddy, postgres, redis"
+  compose_core up -d --remove-orphans
+  local postgres_container attempt
+  for postgres_container in $(plan '.resources.postgres[]'); do
+    for attempt in $(seq 1 30); do
+      docker exec "$postgres_container" pg_isready -q -U postgres && break
+      [[ $attempt -eq 30 ]] && die "$postgres_container did not become ready"
+      sleep 2
+    done
+  done
+
+  local project_id
+  for project_id in $(plan '.projects[].id'); do attach_resources "$project_id"; done
+
+  for attempt in $(seq 1 10); do container_running caddy && break; sleep 1; done
+  if ! container_running caddy; then
+    docker logs --tail 20 caddy >&2 || true
+    die "caddy is not running (crash-looping?). The log above says why; most often a missing /srv/nagaya/certs/<domain>.pem or .key (DEPLOY.md §3.6, §4.11)."
+  fi
+  docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null \
+    || die "the generated Caddyfile does not validate; nothing reloaded"
+  docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  ok "caddy reloaded"
+
+  local tag
+  for project_id in $(plan '.projects[].id'); do
+    tag="$(current_tag "$project_id" || true)"
+    if [[ -z "$tag" ]]; then
+      info "$project_id: not deployed yet (first deploy comes from its repo's CI)"
+      continue
+    fi
+    if [[ "$(project_field "$project_id" .variant)" == stg && "$(staging_state "$project_id")" != up ]]; then
+      if container_running "$(project_field "$project_id" '.services[0].container')"; then
+        compose_project "$project_id" stop; info "$project_id: stopped (staging is down)"
+      fi
+      continue
+    fi
+    split_keys "$project_id"
+    ensure_database "$project_id" "$tag"
+    compose_project "$project_id" up -d --remove-orphans
+  done
+
+  # Projects still running that sites.yaml no longer has: stop them. Data,
+  # volumes and the database are left alone; see DEPLOY.md "Removing a site".
+  local known_projects running_project
+  known_projects=" $(plan '[.projects[].id] | join(" ")') nagaya-core "
+  for running_project in $(docker ps --format '{{.Label "dev.nagaya.project"}}' | sort -u); do
+    [[ -z "$running_project" || "$known_projects" == *" $running_project "* ]] && continue
+    warn "$running_project is no longer in sites.yaml — stopping it"
+    docker compose -p "$running_project" down
+  done
+
+  crontab "$ROOT/generated/crontab"
+  ok "crontab installed"
+  ok "apply finished"
+}
+
+cmd_stg() { # up|down <app>
+  local action="$1" app="$2" staging_projects
+  staging_projects="$(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg") | .id')"
+  [[ -n "$staging_projects" ]] || die "app $app has no staging projects"
+  mkdir -p "$STAGING_STATE_DIR"
+  local project_id
+  for project_id in $staging_projects; do
+    case "$action" in
+      up)
+        local tag; tag="$(current_tag "$project_id" || true)"
+        [[ -n "$tag" ]] || die "$project_id has never been deployed. Push to its staging branch first."
+        echo up > "$STAGING_STATE_DIR/$project_id"
+        split_keys "$project_id"
+        ensure_database "$project_id" "$tag"
+        compose_project "$project_id" up -d
+        wait_healthy "$project_id" || warn "$project_id is up but unhealthy"
+        ;;
+      down)
+        echo down > "$STAGING_STATE_DIR/$project_id"
+        [[ -f "$TAGS_DIR/$project_id.env" ]] && compose_project "$project_id" stop
+        ok "$project_id stopped"
+        ;;
+      *) die "usage: nagaya stg up|down <app>" ;;
+    esac
+  done
+}
+
+# ───────────────────────────── backups ─────────────────────────────
+
+# aws-cli against R2, with credentials from nagaya's env.
+r2() {
+  docker run --rm -i \
+    -e AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?missing in .env.production}" \
+    -e AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?missing in .env.production}" \
+    -e AWS_DEFAULT_REGION=auto \
+    amazon/aws-cli "$@" --endpoint-url "${R2_ENDPOINT:?missing in .env.production}"
+}
+
+database_exists() { # <postgres container> <database>
+  [[ "$(docker exec "$1" psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$2'")" == 1 ]]
+}
+
+table_count() { # <postgres container> <database>
+  docker exec "$1" psql -U postgres -d "$2" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')"
+}
+
+# "<postgres container>\t<bucket>" for a database in the registry.
+database_location() {
+  plan --arg name "$1" '.backups.databases[] | select(.name == $name) | [.resource, .bucket] | @tsv'
+}
+
+newest_backup_key() { # <bucket> <database>
+  r2 s3api list-objects-v2 --bucket "$1" --prefix "$2/$2-" --query 'sort_by(Contents, &LastModified)[-1].Key' --output text
+}
+
+cmd_backup() {
+  local any_failed=0 timestamp
+  timestamp="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+  while IFS=$'\t' read -r database postgres_container bucket; do
+    [[ -n "$database" ]] || continue
+    if ! database_exists "$postgres_container" "$database"; then info "$database: does not exist yet, skipped"; continue; fi
+    local object_key="$database/$database-$timestamp.sql.gz"
+    info "$database → s3://$bucket/$object_key"
+    if docker exec "$postgres_container" pg_dump -U postgres --no-owner --no-acl -d "$database" | gzip \
+        | r2 s3 cp - "s3://$bucket/$object_key" --only-show-errors; then
+      local object_size
+      object_size="$(r2 s3api head-object --bucket "$bucket" --key "$object_key" --query ContentLength --output text 2>/dev/null || echo 0)"
+      if (( object_size >= 2048 )); then ok "$database: $object_size bytes"; else warn "$database: uploaded object is only $object_size bytes"; any_failed=1; fi
+    else
+      warn "$database: dump or upload failed"; any_failed=1
+    fi
+  done < <(plan '.backups.databases[] | [.name, .resource, .bucket] | @tsv')
+  return $any_failed
+}
+
+cmd_restore() { # <db> <file|latest> [--replace]
+  local database="$1" source="$2" replace_flag="${3:-}"
+  local location postgres_container bucket
+  location="$(database_location "$database")"
+  [[ -n "$location" ]] || die "unknown database $database"
+  IFS=$'\t' read -r postgres_container bucket <<<"$location"
+
+  local owner
+  owner="$(docker exec "$postgres_container" psql -U postgres -tAc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '$database'")"
+  [[ -n "$owner" ]] || die "$database does not exist. Run \`nagaya prepare <project> <tag>\` first: it creates the role and an empty database."
+
+  local app_containers container
+  app_containers="$(plan --arg name "$database" '[.projects[] | select(.database.name == $name) | .services[].container] | join(" ")')"
+  for container in $app_containers; do
+    container_running "$container" && die "$container is running. Stop it first: nothing may write to $database during a restore."
+  done
+
+  local tables
+  tables="$(table_count "$postgres_container" "$database")"
+  if (( tables > 0 )); then
+    [[ "$replace_flag" == --replace ]] || die "$database already has $tables tables. Pass --replace to drop and recreate it."
+    warn "dropping and recreating $database (owner $owner)"
+    docker exec "$postgres_container" psql -v ON_ERROR_STOP=1 -q -U postgres \
+      -c "DROP DATABASE \"$database\" WITH (FORCE)" -c "CREATE DATABASE \"$database\" OWNER \"$owner\"" \
+      -c "REVOKE CONNECT ON DATABASE \"$database\" FROM PUBLIC" -c "GRANT CONNECT ON DATABASE \"$database\" TO \"$owner\""
+  fi
+
+  if [[ "$source" == latest ]]; then
+    local object_key
+    object_key="$(newest_backup_key "$bucket" "$database")"
+    [[ -n "$object_key" && "$object_key" != None ]] || die "no backups under s3://$bucket/$database/"
+    info "restoring s3://$bucket/$object_key"
+    read_dump() { r2 s3 cp "s3://$bucket/$object_key" - | gunzip; }
+  else
+    [[ -f "$source" ]] || die "no such file $source"
+    info "restoring $source"
+    case "$source" in
+      *.gz) read_dump() { gunzip -c "$source"; } ;;
+      *)    read_dump() { cat "$source"; } ;;
+    esac
+  fi
+
+  # As the OWNER, not the superuser, so every restored object belongs to the
+  # app's role. Local-socket connections inside the container are trusted.
+  # COMMENT ON EXTENSION lines are dropped: only an extension's owner may
+  # comment on it, plpgsql belongs to postgres, and with ON_ERROR_STOP one such
+  # line would abort the whole restore over a comment nobody reads.
+  read_dump | sed '/^COMMENT ON EXTENSION /d' \
+    | docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -q -U "$owner" -d "$database" >/dev/null
+  ok "$database restored: $(table_count "$postgres_container" "$database") tables, owned by $owner"
+  docker exec "$postgres_container" psql -U postgres -d "$database" -tAc "SELECT 'migrations applied: ' || count(*) FROM drizzle.__drizzle_migrations" 2>/dev/null || true
+}
+
+# Restore the newest backup of <db> into a scratch database, compare it with
+# the live one, and drop the scratch copy. Proves the backups restore.
+cmd_drill() { # <db>
+  local database="$1" location postgres_container bucket
+  location="$(database_location "$database")"
+  [[ -n "$location" ]] || die "unknown database $database"
+  IFS=$'\t' read -r postgres_container bucket <<<"$location"
+  local object_key
+  object_key="$(newest_backup_key "$bucket" "$database")"
+  [[ -n "$object_key" && "$object_key" != None ]] || die "no backups under s3://$bucket/$database/"
+  info "drill: s3://$bucket/$object_key → restore_test"
+
+  docker exec "$postgres_container" psql -q -U postgres -c 'DROP DATABASE IF EXISTS restore_test' -c 'CREATE DATABASE restore_test'
+  r2 s3 cp "s3://$bucket/$object_key" - | gunzip | sed '/^COMMENT ON EXTENSION /d' \
+    | docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -q -U postgres -d restore_test >/dev/null
+
+  local summaries=() compared_database
+  for compared_database in "$database" restore_test; do
+    summaries+=("$(docker exec "$postgres_container" psql -U postgres -d "$compared_database" -tAc "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')) || ' tables, ' || (SELECT count(*) FROM drizzle.__drizzle_migrations) || ' migrations'" 2>/dev/null || echo '?')")
+  done
+  docker exec "$postgres_container" psql -q -U postgres -c 'DROP DATABASE restore_test'
+  local live_summary="${summaries[0]}" backup_summary="${summaries[1]}"
+  printf '  live    %s: %s\n  backup  %s: %s\n' "$database" "$live_summary" "$object_key" "$backup_summary"
+  [[ "$live_summary" != "?" && "$backup_summary" != "?" ]] || die "could not count tables/migrations on one side (no drizzle.__drizzle_migrations?)"
+  [[ "$live_summary" == "$backup_summary" ]] || die "the backup does not match the live database"
+  ok "drill passed for $database"
+}
+
+# ───────────────────────────── scheduled calls ─────────────────────────────
+
+cmd_cron() { # <id>
+  local cron_id="$1" cron_row
+  cron_row="$(plan --arg id "$cron_id" '.crons[] | select(.id == $id) | [.container, (.port|tostring), .path, (.secretHeader.name // ""), (.secretHeader.env // "")] | @tsv')"
+  [[ -n "$cron_row" ]] || die "unknown cron $cron_id"
+  local container port path header_name header_env
+  IFS=$'\t' read -r container port path header_name header_env <<<"$cron_row"
+  container_running "$container" || { info "$(date -u +%FT%TZ) $cron_id: $container not running, skipped"; return 0; }
+  local wget_args=(-q -O - --post-data '')
+  [[ -n "$header_name" ]] && wget_args+=(--header "$header_name: ${!header_env:?$header_env missing in nagaya .env.production}")
+  printf '%s %s: ' "$(date -u +%FT%TZ)" "$cron_id"
+  docker exec "$container" wget "${wget_args[@]}" "http://127.0.0.1:$port$path"
+  echo
+}
+
+# ───────────────────────────── alerts ─────────────────────────────
+
+# Email through Brevo's transactional API: the same account and key the
+# futari apps send with. The key goes to curl through a file descriptor, not
+# argv, so it never shows up in `ps`.
+send_mail() { # <subject> <text>
+  local request_body
+  request_body="$(jq -n \
+    --arg from "$(plan .alerts.from)" \
+    --argjson to "$(jq -c .alerts.to "$PLAN_FILE")" \
+    --arg subject "$1" \
+    --arg text "$2" \
+    '{sender: {email: $from, name: "nagaya"}, to: ($to | map({email: .})), subject: $subject, textContent: $text}')"
+  curl -fsS --max-time 20 -X POST https://api.brevo.com/v3/smtp/email \
+    -H @<(printf 'api-key: %s\n' "${BREVO_API_KEY:?missing in .env.production}") \
+    -H 'content-type: application/json' -H 'accept: application/json' \
+    --data-binary "$request_body" >/dev/null
+}
+
+# What goes under the numbers in every alert email.
+memory_snapshot() {
+  echo "── free -m"
+  free -m
+  echo
+  echo "── containers by memory"
+  docker stats --no-stream --format '{{.MemUsage}}\t{{.Name}}' | sort -h -r | head -12
+  local oom_killed_containers
+  oom_killed_containers="$(docker ps -aq | xargs -r docker inspect -f '{{.Name}} restarts={{.RestartCount}} oomkilled={{.State.OOMKilled}}' | grep 'oomkilled=true' || true)"
+  if [[ -n "$oom_killed_containers" ]]; then echo; echo "── containers whose last exit was an OOM kill"; echo "$oom_killed_containers"; fi
+  echo
+  echo "── disk"
+  df -h / | tail -1
+}
+
+# Every 5 minutes (cron). Measures, compares with sites.yaml's thresholds,
+# and emails when a condition starts, every repeatHours while it lasts, and
+# once when it clears. Swap is judged by ACTIVITY (pages moved in and out per
+# second since the last run), not by how much swap is in use: idle pages
+# parked in swap are harmless, constant paging is not.
+cmd_alerts() {
+  [[ "$(plan '.alerts != null')" == true ]] || { info "sites.yaml has no alerts: block"; return 0; }
+  if [[ "${1:-}" == --test ]]; then
+    send_mail "[nagaya] test alert" "$(printf 'This is a test from nagaya alerts on %s.\n\n' "$(hostname)"; memory_snapshot)"
+    ok "test email sent to $(plan '.alerts.to | join(", ")')"
+    return 0
+  fi
+
+  mkdir -p "$ALERTS_DIR"
+  local now; now="$(date +%s)"
+  local memory_threshold_mb swap_threshold pressure_threshold disk_threshold repeat_seconds
+  memory_threshold_mb="$(plan .alerts.thresholds.memAvailableMb)"
+  swap_threshold="$(plan .alerts.thresholds.swapPagesPerSec)"
+  pressure_threshold="$(plan .alerts.thresholds.psiSomeAvg300)"
+  disk_threshold="$(plan .alerts.thresholds.diskUsedPct)"
+  repeat_seconds=$(( $(plan .alerts.repeatHours) * 3600 ))
+
+  # ── measure ──
+  local available_mb swap_used_mb swap_in_pages swap_out_pages oom_kills memory_pressure disk_used
+  available_mb="$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)"
+  swap_used_mb="$(awk '/^SwapTotal:/ { total = $2 } /^SwapFree:/ { free = $2 } END { print int((total - free) / 1024) }' /proc/meminfo)"
+  read -r swap_in_pages swap_out_pages oom_kills < <(awk '
+    /^pswpin /   { swapped_in = $2 }
+    /^pswpout /  { swapped_out = $2 }
+    /^oom_kill / { killed = $2 }
+    END { print swapped_in + 0, swapped_out + 0, killed + 0 }' /proc/vmstat)
+  memory_pressure="$(awk '/^some/ { for (field = 1; field <= NF; field++) if ($field ~ /^avg300=/) { sub("avg300=", "", $field); print $field } }' /proc/pressure/memory 2>/dev/null || echo 0)"
+  disk_used="$(df --output=pcent / | tail -1 | tr -dc '0-9')"
+
+  # The kernel's counters only ever grow; the rate is the change since the
+  # previous run, divided by the seconds in between.
+  local swap_rate=0 previous_oom_kills="$oom_kills"
+  if [[ -f "$ALERTS_DIR/last" ]]; then
+    local previous_time previous_swap_in previous_swap_out
+    read -r previous_time previous_swap_in previous_swap_out previous_oom_kills < "$ALERTS_DIR/last"
+    (( now > previous_time )) \
+      && swap_rate=$(( ((swap_in_pages - previous_swap_in) + (swap_out_pages - previous_swap_out)) / (now - previous_time) ))
+  fi
+  echo "$now $swap_in_pages $swap_out_pages $oom_kills" > "$ALERTS_DIR/last"
+
+  printf '%s available=%sMB swap_used=%sMB swap_rate=%s/s pressure300=%s disk=%s%% oom_kills=%s\n' \
+    "$(date -u +%FT%TZ)" "$available_mb" "$swap_used_mb" "$swap_rate" "$memory_pressure" "$disk_used" "$oom_kills"
+
+  # ── compare ── each check: name | is firing (1/0) | description
+  local checks=(
+    "memory|$(( available_mb < memory_threshold_mb ))|Available memory is ${available_mb} MB (alert below ${memory_threshold_mb} MB)."
+    "swap|$(( swap_rate >= swap_threshold ))|Swapping ${swap_rate} pages/s over the last interval (alert at ${swap_threshold}); ${swap_used_mb} MB of swap in use."
+    "pressure|$(awk -v measured="$memory_pressure" -v limit="$pressure_threshold" 'BEGIN { print (measured + 0 >= limit + 0) ? 1 : 0 }')|Tasks were stalled waiting for memory ${memory_pressure}% of the last 5 minutes (alert at ${pressure_threshold}%)."
+    "disk|$(( disk_used >= disk_threshold ))|The root disk is ${disk_used}% full (alert at ${disk_threshold}%)."
+  )
+  local firing_lines=() resolved_lines=() fired_checks=() cleared_checks=()
+  local check check_name is_firing description
+  for check in "${checks[@]}"; do
+    IFS='|' read -r check_name is_firing description <<<"$check"
+    if (( is_firing )); then
+      local last_sent=0
+      [[ -f "$ALERTS_DIR/$check_name" ]] && last_sent="$(cat "$ALERTS_DIR/$check_name")"
+      if (( now - last_sent >= repeat_seconds )); then firing_lines+=("• $description"); fired_checks+=("$check_name"); fi
+    elif [[ -f "$ALERTS_DIR/$check_name" ]]; then
+      resolved_lines+=("• $check_name is back to normal: $description"); cleared_checks+=("$check_name")
+    fi
+  done
+  # OOM kills are events, not states: report each new one once.
+  if (( oom_kills > previous_oom_kills )); then
+    firing_lines+=("• The kernel OOM-killed $(( oom_kills - previous_oom_kills )) process(es) since the last check. A container hit its mem: cap, or the box ran out.")
+  fi
+
+  (( ${#firing_lines[@]} + ${#resolved_lines[@]} )) || return 0
+
+  # ── email ──
+  local subject
+  if (( ${#firing_lines[@]} )); then
+    subject="[nagaya] ALERT: $(printf '%s\n' "${firing_lines[@]}" | sed -E 's/^• ([^.]*).*/\1/' | head -1)"
+  else
+    subject="[nagaya] resolved: $(printf '%s ' "${resolved_lines[@]#• }" | cut -c1-80)"
+  fi
+  local email_text
+  email_text="$(
+    if (( ${#firing_lines[@]} )); then printf '%s\n' "${firing_lines[@]}"; echo; fi
+    if (( ${#resolved_lines[@]} )); then printf '%s\n' "${resolved_lines[@]}"; echo; fi
+    memory_snapshot
+    echo
+    echo "What each number means and what to do: nagaya DEPLOY.md → Day-2 → \"Memory: is the box short?\""
+    echo "Thresholds live in sites.yaml under alerts:. Sent by $(hostname) at $(date -u +%FT%TZ)."
+  )"
+  if send_mail "$subject" "$email_text"; then
+    for check_name in "${fired_checks[@]}"; do echo "$now" > "$ALERTS_DIR/$check_name"; done
+    for check_name in "${cleared_checks[@]}"; do rm -f "$ALERTS_DIR/$check_name"; done
+    ok "alert sent: $subject"
+  else
+    # State is only written on success, so the next run tries again.
+    warn "could not send the alert email; will retry next run"
+    return 1
+  fi
+}
+
+# ───────────────────────────── status ─────────────────────────────
+
+cmd_status() {
+  printf '%-22s %-6s %-12s %s\n' PROJECT KIND TAG STATE
+  local project_id
+  for project_id in $(plan '.projects[].id'); do
+    local tag running_state variant
+    tag="$(current_tag "$project_id" || echo '-')"
+    variant="$(project_field "$project_id" .variant)"
+    if container_running "$(project_field "$project_id" '.services[0].container')"; then running_state=running; else running_state=stopped; fi
+    [[ "$variant" == stg ]] && running_state="$running_state (stg: $(staging_state "$project_id"))"
+    printf '%-22s %-6s %-12s %s\n' "$project_id" "$variant" "${tag:0:12}" "$running_state"
+  done
+  echo
+  docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}'
+  echo
+  free -m
+  echo
+  df -h / | tail -1
+}
+
+# ───────────────────────────── CI entry point ─────────────────────────────
+
+cmd_ssh_dispatch() {
+  # authorized_keys: command="/srv/nagaya/bin/nagaya ssh-dispatch",restrict ssh-ed25519 AAAA… nagaya-ci
+  # The CI key can do exactly two things, whatever it asks for.
+  local requested="${SSH_ORIGINAL_COMMAND:-}"
+  requested="${requested#nagaya }"
+  if [[ "$requested" =~ ^deploy\ ([a-z0-9-]+)\ ([0-9a-f]{7,40})$ ]]; then
+    exec "$0" deploy "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+  elif [[ "$requested" == apply ]]; then
+    exec "$0" apply
+  fi
+  die "refused: \"$requested\" (the CI key may only run: deploy <project> <sha> | apply)"
+}
+
+# ───────────────────────────── main ─────────────────────────────
+
+main() {
+  local command="${1:-}"; shift || true
+  case "$command" in
+    ""|-h|--help|help) usage ;;
+    ssh-dispatch) cmd_ssh_dispatch; return ;;
+  esac
+  require_command jq; require_command docker; require_command dotenvx; require_command flock
+  [[ -f "$PLAN_FILE" ]] || die "$PLAN_FILE is missing; is $ROOT a checkout of the nagaya repo?"
+  load_secrets "$command" "$@"
+
+  case "$command" in
+    apply)    take_lock; cmd_apply "$@" ;;
+    prepare)  [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_prepare "$@"; rm -f "$TAGS_DIR/$1.next.env" ;;
+    deploy)   [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_deploy "$@" ;;
+    rollback) [[ $# -eq 1 ]] || usage_for "$command"; take_lock; cmd_rollback "$@" ;;
+    stg)      [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_stg "$@" ;;
+    backup)   take_lock; cmd_backup ;;
+    restore)  [[ $# -ge 2 ]] || usage_for "$command"; take_lock; cmd_restore "$@" ;;
+    drill)    [[ $# -eq 1 ]] || usage_for "$command"; take_lock; cmd_drill "$@" ;;
+    cron)     [[ $# -eq 1 ]] || usage_for "$command"; cmd_cron "$@" ;;
+    alerts)   cmd_alerts "$@" ;;
+    status)   cmd_status ;;
+    core)     take_lock; compose_core "$@" ;;
+    psql)
+      [[ $# -eq 1 ]] || usage_for "$command"
+      local postgres_container
+      postgres_container="$(plan --arg name "$1" 'first(.backups.databases[] | select(.name == $name) | .resource) // .resources.postgres[0]')"
+      docker exec -it "$postgres_container" psql -U postgres -d "$1" ;;
+    login)
+      printf '%s' "${GHCR_TOKEN:?missing in .env.production}" \
+        | docker login ghcr.io -u "${GHCR_USER:?missing in .env.production}" --password-stdin ;;
+    *) warn "unknown command $command"; usage 1 ;;
+  esac
+}
+
+main "$@"

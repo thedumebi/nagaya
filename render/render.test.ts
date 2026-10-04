@@ -150,3 +150,12 @@ test('plan.json keys are all camelCase', () => {
   const snakeKeys = [...planText.matchAll(/"([a-z]+_[a-z0-9_]+)":/g)].map(found => found[1])
   assert.deepEqual(snakeKeys, [])
 })
+
+test('a cron id is <project>-<name>; two crons with one name in a site is an error', () => {
+  const cronIds = loadModel(SITES_YAML).projects.flatMap(project => project.crons.map(cron => cron.id))
+  assert.deepEqual(cronIds, ['futari-nihongo-reminders'])
+  assert.throws(loadEdited(sitesYaml => sitesYaml.replace(
+    '        cron:\n          - name: reminders',
+    '        cron:\n          - name: reminders\n            at: "0 * * * *"\n            service: backend\n            post: /other\n          - name: reminders',
+  )), /two crons are named "reminders"/)
+})
