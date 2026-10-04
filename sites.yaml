@@ -90,7 +90,7 @@ apps:
   futari:
     domain: futari.live
     defaults:
-      origin: hetzner-dmb
+      origin: nagaya
       postgres: { use: pg-main, as: [postgres, dmb-postgres] }   # dmb says postgres, abm/nihongo say dmb-postgres
       redis:    { use: redis-futari, as: [redis, dmb-redis] }
 
@@ -142,7 +142,6 @@ apps:
 
       abm:
         repo: thedumebi/abm.futari
-        origin: nagaya 
         database: abm
         services:
           backend:
@@ -164,7 +163,6 @@ apps:
 
       nihongo:
         repo: thedumebi/nihongo.futari
-        origin: nagaya
         database: nihongo
         services:
           backend:
