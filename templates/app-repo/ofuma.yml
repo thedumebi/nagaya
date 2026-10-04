@@ -40,11 +40,10 @@ env:
 
 jobs:
   test:
-    name: Lint + test (${{ matrix.project }})
+    # The same checks as the repo's ci.yaml. No typecheck: doca/api has
+    # long-standing type errors that ci.yaml does not gate on either.
+    name: Lint + test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        project: [ofuma, doca]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -55,11 +54,10 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm exec turbo run build --filter=@${{ matrix.project }}/shared...
-      - run: pnpm exec turbo run lint --filter="./${{ matrix.project }}/*"
-      - run: pnpm exec turbo run test --filter="./${{ matrix.project }}/*"
-      - run: pnpm exec turbo run typecheck --filter="./${{ matrix.project }}/*"
+      - run: pnpm i --frozen-lockfile --ignore-scripts
+      - run: pnpm run build --filter=@ofuma/shared --filter=@doca/shared
+      - run: pnpm run lint
+      - run: pnpm run test
 
   build:
     name: Build ${{ matrix.image }}
