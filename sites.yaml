@@ -163,6 +163,7 @@ apps:
 
       nihongo:
         repo: thedumebi/nihongo.futari
+        origin: nagaya
         database: nihongo
         services:
           backend:
