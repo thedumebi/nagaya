@@ -145,6 +145,12 @@ Changes that make each app's images runnable on nagaya. **Every one of them is
 safe to merge now.** Hetzner keeps deploying exactly as before, because
 everything here is either inert there or an improvement.
 
+> ✅ **Done 2026-10-04.** All of 1.1–1.7 is merged and pushed: futari's on
+> `master`; ofuma's on both `master` and `stg` (cherry-picked onto `master`,
+> so `stg`'s Piston commit stayed off production). Hetzner redeployed every
+> site cleanly, and the first nagaya image builds passed in all four repos.
+> The steps below stay as the record of what was done and why.
+
 ### 1.1 💻 LAPTOP — bake the encrypted env file into dmb, abm and nihongo's backend images
 
 On Hetzner each backend gets `.env.production` from a **bind mount** of the
@@ -253,8 +259,7 @@ off the same queues. Two settings keep them apart, one new and one existing:
   It can't be injected on the connection instead: ioredis' `keyPrefix` skips
   pub/sub channels, and BullMQ rejects connections that set it.
 
-The code change, done on branch `nagaya/doca-standard-db-env` (on top of §1.5,
-whose doca file it shares), uncommitted:
+The code change (on `master` and `stg`, after §1.5, whose doca file it shares):
 
 - `ofuma/shared/src/types/env.ts` and `doca/shared/src/env.ts`: `REDIS_DB`, default `0`
 - `db: env.REDIS_DB` on every Redis connection: `ofuma/shared/src/utils/redis.ts`,
@@ -265,8 +270,7 @@ whose doca file it shares), uncommitted:
 Checked 2026-10-04: ofuma/shared, ofuma/backend and doca/shared typecheck clean;
 doca/api has the same 13 errors `stg` already had (stale imports, none in these
 lines); ofuma's tests pass. With the defaults, production behaves exactly as
-before, so this can merge any time. Commit it together with §1.5, or as its own
-commit from the same branch.
+before, so this can merge any time. 
 
 ### 1.4 💻 LAPTOP — ofuma: the frontends read their runtime values from their own repo
 
@@ -359,7 +363,7 @@ curl -s localhost:8089 | grep -o 'Ofuma.ai \[Staging\]' | head -1
 On Hetzner nothing changes: its compose still passes the `OFUMA_*` variables
 explicitly, and those win over the file.
 
-### 1.5 💻 LAPTOP — doca: the standard database key names *(done; review and merge)*
+### 1.5 💻 LAPTOP — doca: the standard database key names
 
 nagaya reads every app's database credentials from the app's own env file
 under fixed names: `PG_USERNAME`, `PG_PASSWORD`, `PG_DATABASE`, plus
@@ -408,9 +412,8 @@ staging copy would run the production image, and its staging frontend would
 call the **production** API. The nagaya deploy templates (§1.7) pass no build
 arguments, so **do this before a repo's first nagaya image build**.
 
-The change is already made, uncommitted, on branch
-**`nagaya/frontend-runtime-env`** in each of `dmb.futari`, `abm.futari` and
-`nihongo.futari` (cut from `master`). Each touches four files (shown for dmb;
+The change was made on branch **`nagaya/frontend-runtime-env`** in each of
+`dmb.futari`, `abm.futari` and `nihongo.futari`, and is merged. Each touches four files (shown for dmb;
 abm and nihongo use `ABM_` / `NIHONGO_`):
 
 | File | What it does |
