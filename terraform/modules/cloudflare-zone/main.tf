@@ -85,9 +85,17 @@ resource "cloudflare_origin_ca_certificate" "this" {
   count = var.origin_csr == null ? 0 : 1
 
   csr                = var.origin_csr
-  hostnames          = [var.domain, "*.${var.domain}"]
+  hostnames          = ["*.${var.domain}", var.domain] # the order Cloudflare stores them in
   request_type       = "origin-rsa"
   requested_validity = 5475
+
+  lifecycle {
+    # Any change to hostnames forces a NEW certificate, and replacing one
+    # revokes the certificate the box is serving. Cloudflare returns them in
+    # its own order, so a mere reordering must never count as a change. A new
+    # CSR (RUNBOOK.md §3.6 again) still replaces the certificate.
+    ignore_changes = [hostnames]
+  }
 }
 
 # ───────────────────────────── email routing ─────────────────────────────
