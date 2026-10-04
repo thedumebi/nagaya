@@ -142,6 +142,7 @@ apps:
 
       abm:
         repo: thedumebi/abm.futari
+        origin: nagaya 
         database: abm
         services:
           backend:
