@@ -491,11 +491,14 @@ and, when asked, tells nagaya to deploy them. Templates are in this repo:
 | `templates/app-repo/futari-dmb.yml` | `dmb.futari/.github/workflows/deploy-nagaya.yml` |
 | `templates/app-repo/futari-abm.yml` | `abm.futari/.github/workflows/deploy-nagaya.yml` |
 | `templates/app-repo/futari-nihongo.yml` | `nihongo.futari/.github/workflows/deploy-nagaya.yml` |
-| `templates/app-repo/ofuma.yml` | `ofuma/.github/workflows/deploy-nagaya.yml`, on **master** and **stg** |
+| `templates/app-repo/ofuma-main.yml` | `ofuma/.github/workflows/deploy-nagaya-ofuma.yml`, on **master** and **stg** |
+| `templates/app-repo/ofuma-doca.yml` | `ofuma/.github/workflows/deploy-nagaya-doca.yml`, on **master** and **stg** |
 
-> **ofuma and doca ship together from `master` (production) and `stg`
-> (staging).** One workflow builds all four images and deploys `ofuma-main`
-> and then `ofuma-doca` at the same SHA. The `doca/master` and `doca/dev`
+> **ofuma and doca ship from the same branches, `master` (production) and
+> `stg` (staging), but through two workflows**, as on Hetzner: one builds and
+> deploys `ofuma-main` when `ofuma/**` changes, the other `ofuma-doca` when
+> `doca/**` (or `ofuma/shared/**`, which doca depends on) changes. A doca-only
+> push never restarts main, and the reverse. The `doca/master` and `doca/dev`
 > branches stopped on 2026-04-29, before the repo was restructured; doca's
 > current code is on `master`/`stg`. The old `deploy-doca-*-vps` workflows
 > exist only on `master` but trigger on pushes to `doca/master`/`doca/stg`.
@@ -1682,7 +1685,9 @@ ofuma differs in three ways:
   `thedumebi`, with a password different from the futari sites'. On nagaya,
   `thedumebi` already belongs to the futari sites, so ofuma gets its own role,
   `ofuma`. That needs one env-file change per site, below.
-- **One branch builds both.** `master` builds main's and doca's images at the same SHA.
+- **Two workflows, one branch.** `master` feeds both: *Deploy ofuma (nagaya)*
+  for main, *Deploy doca (nagaya)* for doca. Run both on the same commit and
+  all four images share one SHA.
 
 **6.4.1** 🌐 **GitHub** → `ofuma.ai` → **Actions**. Disable the four Hetzner
 workflows, so the env commit below cannot deploy a half-changed config to Hetzner:
@@ -1715,8 +1720,10 @@ Nothing else in the production env files changes:
   from (§3.1).
 - `TRUSTED_PROXY_CIDRS` was fixed in §1.2.
 
-**6.4.3** 🌐 **GitHub** → **Deploy (nagaya)** → **Run workflow** on `master`,
-deploy unticked → `<sha>`. One run builds all four images.
+**6.4.3** 🌐 **GitHub** → **Actions** → **Deploy ofuma (nagaya)** → **Run
+workflow** on `master`, deploy unticked; then the same for **Deploy doca
+(nagaya)**. Both green on the same commit → that commit is `<sha>`, and all
+four images exist at it.
 
 **6.4.4** 🖥️ **SERVER nagaya**:
 ```bash
@@ -1769,8 +1776,10 @@ until Phase 7). Render → apply. Expect 5 records changed: `ofuma.ai`, `www`,
   If an operation takes longer and matters, make it asynchronous. Grey-clouding `api.ofuma.ai` instead is not an
   option, because the firewall only admits Cloudflare.
 
-**6.4.9** 💻 — in `ofuma` on `master`: switch on the `push:` trigger in
-`deploy-nagaya.yml` (branches `master` only for now; `stg` joins in §7.5). Leave the disabled Hetzner
+**6.4.9** 💻 — in `ofuma` on `master`: switch on the `push:` trigger (its
+`branches:` and `paths:` lines) in **both** `deploy-nagaya-ofuma.yml` and
+`deploy-nagaya-doca.yml`, and set each `deploy` default to `true`. Branches
+`master` only for now; `stg` joins in §7.5. Leave the disabled Hetzner
 workflows for Phase 9.
 
 **6.4.10** 🖥️ **HETZNER ofuma-prod**:
@@ -1858,7 +1867,7 @@ While staging is down, they show the "Staging is off" page.
 
 ### 7.5 🖥️ + 🌐 — first start: restore, then deploy
 
-1. 🌐 **Deploy (nagaya)** on `stg`, *deploy unticked* → `<sha_stg>` (all four images).
+1. 🌐 **Deploy ofuma (nagaya)** and **Deploy doca (nagaya)** on `stg`, both *deploy unticked*, same commit → `<sha_stg>` (all four images).
 2. 🖥️ nagaya:
    ```bash
    nagaya prepare ofuma-main-stg <sha_stg>          # role ofuma_stg, empty database ofuma_stg
@@ -1867,8 +1876,10 @@ While staging is down, they show the "Staging is off" page.
    nagaya deploy ofuma-main-stg <sha_stg>           # also marks staging "up"
    nagaya deploy ofuma-doca-stg <sha_stg>
    ```
-3. Add `stg` to the `push:` branches in `deploy-nagaya.yml`, on both `master`
-   and `stg`, so `[master, stg]` everywhere.
+3. Add `stg` to the `push:` branches in both `deploy-nagaya-ofuma.yml` and
+   `deploy-nagaya-doca.yml`, on both `master` and `stg`, so `[master, stg]`
+   everywhere. (`<sha_stg>` above: run both workflows on the same `stg`
+   commit, deploy unticked, as in §6.4.3.)
 4. Check it: `https://stg.ofuma.ai` loads and logs in. Then confirm staging's
    queues are separate:
    ```bash
@@ -1985,7 +1996,7 @@ OAuth origins and redirect URIs.
 
 | Change | How it ships |
 |---|---|
-| **App code** (any app repo) | Push to `master` (or a staging branch). That repo's **Deploy (nagaya)** workflow tests, builds the images, pushes them to GHCR and runs `nagaya deploy <project> <sha>`. If health checks fail, nagaya rolls back to the previous tag and the job goes red. |
+| **App code** (any app repo) | Push to `master` (or a staging branch). That repo's **Deploy (nagaya)** workflow (in ofuma: *Deploy ofuma* or *Deploy doca*, by the paths changed) tests, builds the images, pushes them to GHCR and runs `nagaya deploy <project> <sha>`. If health checks fail, nagaya rolls back to the previous tag and the job goes red. |
 | **App config / secrets** | `dotenvx set KEY value -f <app>/backend/.env.production`, commit, push. The env file is baked into the image, so a config change is a deploy like any other. A changed `PG_PASSWORD` is applied to the role by that deploy. |
 | **The registry** (`sites.yaml`) | Branch, edit, `pnpm render`, commit both, open a PR. CI shows the Terraform plan. Merge → Terraform apply → `nagaya apply`. |
 | **nagaya itself** (`bin/nagaya`, renderer, static page) | PR → merge; `nagaya apply` pulls it. |

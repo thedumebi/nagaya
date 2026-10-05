@@ -1,0 +1,115 @@
+# Copy to ofuma/.github/workflows/deploy-nagaya-ofuma.yml, on master AND stg (RUNBOOK.md §1.7).
+#
+# ofuma main: builds the backend and frontend images and deploys project
+# ofuma-main (master) or ofuma-main-stg (stg; deploying also switches staging
+# on). doca has its own workflow, deploy-nagaya-doca.yml, so a push that only
+# touches doca does not rebuild or restart main, and the reverse.
+#
+# Until ofuma is cut over (RUNBOOK.md §6.4), keep `push:` commented out.
+name: Deploy ofuma (nagaya)
+
+on:
+  # push:
+  #   branches: [master]
+  #   paths:
+  #     - 'ofuma/**'
+  #     - 'packages/**'
+  #     - 'pnpm-lock.yaml'
+  #     - '.github/workflows/deploy-nagaya-ofuma.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after building (untick to only build and push images)
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-nagaya-main-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Same images for prod and staging: NODE_ENV picks .env.production or
+  # .env.staging inside each one (backends and frontends alike).
+  SUFFIX: ${{ github.ref_name == 'stg' && '-stg' || '' }}
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+jobs:
+  test:
+    # The same checks as the repo's ci.yaml. No typecheck: doca/api has
+    # long-standing type errors that ci.yaml does not gate on either.
+    name: Lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # No version: pnpm/action-setup reads packageManager from package.json,
+      # and refuses a second, different version.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm i --frozen-lockfile --ignore-scripts
+      - run: pnpm run build --filter=@ofuma/shared --filter=@doca/shared
+      - run: pnpm run lint
+      - run: pnpm run test
+
+  build:
+    name: Build ${{ matrix.image }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: ofuma-main-backend
+            dockerfile: ofuma/backend/Dockerfile
+          - image: ofuma-main-frontend
+            dockerfile: ofuma/frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runner
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/thedumebi/${{ matrix.image }}:${{ github.sha }}
+          secrets: |
+            turbo_token=${{ secrets.TURBO_TOKEN }}
+            turbo_team=${{ vars.TURBO_TEAM }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    name: Deploy to nagaya
+    needs: build
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.NAGAYA_HOST }}
+      KNOWN_HOSTS: ${{ secrets.NAGAYA_KNOWN_HOSTS }}
+      SSH_KEY: ${{ secrets.NAGAYA_SSH_KEY }}
+    steps:
+      - name: nagaya deploy
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          # The key is pinned to `nagaya ssh-dispatch`, which accepts only
+          # "deploy <project> <sha>" (and "apply"). nagaya pulls the images,
+          # creates/updates the database role, starts the containers and
+          # health-checks them, rolling back to the previous tag on failure.
+          ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" \
+            "deploy ofuma-main${SUFFIX} ${{ github.sha }}"

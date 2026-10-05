@@ -1,21 +1,24 @@
-# Copy to ofuma/.github/workflows/deploy-nagaya.yml, on master AND stg (RUNBOOK.md §1.7).
+# Copy to ofuma/.github/workflows/deploy-nagaya-doca.yml, on master AND stg (RUNBOOK.md §1.7).
 #
-# ofuma and doca live in one repo and ship from the same branches:
-#   master → projects ofuma-main + ofuma-doca
-#   stg    → projects ofuma-main-stg + ofuma-doca-stg  (deploying also switches staging on)
-# (The old doca/master and doca/dev branches stopped at 2026-04-29 and are not used.)
+# doca: builds the doca-api and doca-web images and deploys project
+# ofuma-doca (master) or ofuma-doca-stg (stg). ofuma main has its own
+# workflow, deploy-nagaya-ofuma.yml.
 #
-# Builds ALL FOUR images on every push, not just the changed ones, so the box
-# can always pull every image at the pushed SHA. ofuma is quiet; the extra
-# build minutes do not matter. Then deploys main before doca, because doca's
-# API calls main's backend.
+# ofuma/shared/** is in the paths too: doca/api and doca/shared depend on
+# @ofuma/shared, so a change there must rebuild doca as well.
 #
 # Until ofuma is cut over (RUNBOOK.md §6.4), keep `push:` commented out.
-name: Deploy (nagaya)
+name: Deploy doca (nagaya)
 
 on:
   # push:
-  #   branches: [master, stg]
+  #   branches: [master]
+  #   paths:
+  #     - 'doca/**'
+  #     - 'ofuma/shared/**'
+  #     - 'packages/**'
+  #     - 'pnpm-lock.yaml'
+  #     - '.github/workflows/deploy-nagaya-doca.yml'
   workflow_dispatch:
     inputs:
       deploy:
@@ -24,7 +27,7 @@ on:
         default: false
 
 concurrency:
-  group: deploy-nagaya-${{ github.ref_name }}
+  group: deploy-nagaya-doca-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -66,10 +69,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: ofuma-main-backend
-            dockerfile: ofuma/backend/Dockerfile
-          - image: ofuma-main-frontend
-            dockerfile: ofuma/frontend/Dockerfile
           - image: ofuma-doca-doca-api
             dockerfile: doca/api/Dockerfile
           - image: ofuma-doca-doca-web
@@ -106,16 +105,14 @@ jobs:
       KNOWN_HOSTS: ${{ secrets.NAGAYA_KNOWN_HOSTS }}
       SSH_KEY: ${{ secrets.NAGAYA_SSH_KEY }}
     steps:
-      - name: nagaya deploy (main, then doca)
+      - name: nagaya deploy
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           # The key is pinned to `nagaya ssh-dispatch`, which accepts only
-          # "deploy <project> <sha>" (and "apply"). Each deploy pulls the
-          # images, creates/updates the database role, starts the containers
-          # and health-checks them, rolling back to the previous tag on failure.
-          for project in "ofuma-main${SUFFIX}" "ofuma-doca${SUFFIX}"; do
-            ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" \
-              "deploy ${project} ${{ github.sha }}"
-          done
+          # "deploy <project> <sha>" (and "apply"). nagaya pulls the images,
+          # creates/updates the database role, starts the containers and
+          # health-checks them, rolling back to the previous tag on failure.
+          ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" \
+            "deploy ofuma-doca${SUFFIX} ${{ github.sha }}"
