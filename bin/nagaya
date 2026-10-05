@@ -329,12 +329,18 @@ wait_healthy() { # <project> [service…]  (no services: all of them)
 
   # End to end through Caddy, on the box: proves routing and the origin cert.
   # (From the laptop this cannot work: the firewall only admits Cloudflare.)
-  local host status_code
+  # Any answer below 500 proves Caddy, the cert and the upstream are wired
+  # up (an API host may well 404 on /). 502 means the upstream is not (yet)
+  # there, so retry for a minute: a service with no health check of its own
+  # (a frontend's nginx) is only just starting when this runs.
+  local host status_code attempt
   while read -r host; do
     [[ -n "$host" ]] || continue
-    status_code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$host:443:127.0.0.1" "https://$host/" || echo 000)"
-    # Any answer below 500 proves Caddy, the cert and the upstream are wired
-    # up (an API host may well 404 on /). 502 means the upstream is not there.
+    for attempt in $(seq 1 30); do
+      status_code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$host:443:127.0.0.1" "https://$host/" || echo 000)"
+      [[ "$status_code" =~ ^[1-4] ]] && break
+      sleep 2
+    done
     if [[ "$status_code" =~ ^[1-4] ]]; then ok "https://$host → $status_code"; else warn "https://$host → $status_code"; any_failed=1; fi
   done < <(plan --arg id "$project_id" '.routes[] | select(.project == $id) | .host')
   return $any_failed
