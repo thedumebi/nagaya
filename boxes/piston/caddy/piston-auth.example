@@ -1,0 +1,3 @@
+# Copy to caddy/piston-auth on the box (chmod 600). One line: user, space, bcrypt hash.
+# Make a hash: docker run --rm caddy:2-alpine caddy hash-password --plaintext 'THE_TOKEN'
+piston $2a$14$REPLACE_WITH_THE_REAL_HASH

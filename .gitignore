@@ -18,3 +18,7 @@ crash.log
 
 # Saved Terraform plans can hold sensitive values.
 terraform/*.plan
+
+# The Piston box keeps its secrets on the box only (this repo is public).
+boxes/piston/.env
+boxes/piston/caddy/piston-auth

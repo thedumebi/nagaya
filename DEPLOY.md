@@ -34,7 +34,7 @@ How the pieces work today:
   `git reset --hard` and then `docker compose up --build`.
 - **DNS for both domains is Namecheap BasicDNS.**
 
-**The goal** is one netcup VPS 500 G12.5 (Nooklet's box is the older VPS 500 G12: same CPU and memory, but 128 GB NVMe, where G12.5 has 64 GB SSD; G12 is no longer sold) running all of it except Piston:
+**The goal** is one netcup VPS 500 G12.5 (Nooklet's box is the older VPS 500 G12: same CPU and memory, but 128 GB NVMe, where G12.5 has 64 GB SSD; G12 is no longer sold) running all of it except Piston, which keeps the old Hetzner staging box to itself:
 
 - **One registry, `sites.yaml`, declares everything.** Adding a domain or
   subdomain is an entry and a merge.
@@ -57,7 +57,7 @@ How the pieces work today:
 |---|---|
 | Server | netcup **VPS 500 G12.5** (2 vCore, 4 GB, 64 GB SSD), Nuremberg, **monthly / no commitment**, hostname `nagaya` |
 | Orchestration | **Docker Compose + Caddy**, not k3s. The apps are already compose-shaped, and k3s costs ~700 MB of a 4 GB box |
-| What runs | futari.live (static), dmb, abm, nihongo, ofuma (main + doca) prod, ofuma staging (off by default). **Piston is dropped** |
+| What runs | futari.live (static), dmb, abm, nihongo, ofuma (main + doca) prod, ofuma staging (off by default). **Piston is not on nagaya**: it stays alone on the old Hetzner staging box (`boxes/piston/`), because it runs untrusted code in a privileged container and must never sit next to the databases and keys |
 | Registry | `sites.yaml` in this repo, rendered by `pnpm render` (TypeScript + zod) into `generated/` |
 | Images | Built in each app repo's CI, pushed to **GHCR** as `ghcr.io/thedumebi/<app>-<site>-<service>:<sha>` |
 | Deploy | CI SSHes in with a key that can only run `nagaya deploy <project> <sha>` |
@@ -74,11 +74,12 @@ How the pieces work today:
 
 | Item | Monthly |
 |---|---|
-| netcup VPS 500 G12.5, Nuremberg, no commitment | ~€9.50 (netcup's listed price, October 2026; your invoice is the truth) |
+| netcup VPS 500 G12.5, Nuremberg, no commitment | ~€9.50 (netcup's listed price, October 2026; your invoice is the truth). €8.26 on a 12-month term |
+| Hetzner CX23, the Piston box | ~€5.49 (after Hetzner's June 2026 rise) |
 | Cloudflare (DNS, CDN, WAF, Origin CA, Email Routing) | €0 |
 | Cloudflare R2 (backups + Terraform state, well under 10 GB) | €0 |
 | GHCR (private images, within the free storage) | €0 |
-| **Total for compute** | **~€9.50/mo**, replacing three Hetzner boxes |
+| **Total for compute** | **~€15/mo** for nagaya + the Piston box, replacing three Hetzner boxes |
 
 ---
 
@@ -158,7 +159,11 @@ in [Day-2 → Memory](RUNBOOK.md#memory-is-the-box-short).
 - **A metrics stack** (Prometheus, Grafana). `nagaya alerts` and `nagaya
   status` cover what a single small box needs. UptimeRobot (free) on one URL per
   site covers "is it up from outside", and is worth adding once Phase 6 is done.
-- **Piston.** Dropped with the Hetzner staging box.
+- **Piston on nagaya.** It needs a privileged container (root on the host
+  if its sandbox is escaped) and Java/C++ compiles spike to ~1.4 GB. It runs
+  alone on the old Hetzner staging box instead; `boxes/piston/README.md`.
+  The free public Piston API is whitelist-only (non-commercial) since
+  February 2026, and Judge0's free tier allows 50 runs a day.
 - **Authenticated Origin Pulls** (mTLS from Cloudflare). The DOCKER-USER rule
   already admits only Cloudflare's ranges; AOP would add a layer that does not
   depend on IP ranges. It is worth doing later, not needed to migrate.

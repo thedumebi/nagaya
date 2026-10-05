@@ -12,14 +12,10 @@ registry: ghcr.io/thedumebi
 
 # Machines that DNS records can point at. A site's records follow its origin,
 # so moving a site between boxes is a one-word change. `proxied: false` keeps
-# the record grey-clouded, which is how the Hetzner boxes keep working exactly
-# as they do today (their own Caddy, their own Let's Encrypt certs) until a
-# site is cut over. Remove the hetzner-* entries in RUNBOOK.md Phase 9.
+# the record grey-clouded (the box serves its own TLS). During the migration
+# the Hetzner boxes were origins here too; they are gone since Phase 9.
 origins:
-  nagaya:            { ip: 152.53.205.203, proxied: true }        # fill in at RUNBOOK.md §2.1 step 5
-  hetzner-dmb:       { ip: 138.199.195.21, proxied: false }
-  hetzner-ofuma:     { ip: 91.99.67.183,   proxied: false }
-  hetzner-ofuma-stg: { ip: 46.225.127.236, proxied: false }
+  nagaya: { ip: 152.53.205.203, proxied: true }
 
 # ─────────────── Resources: defined once, referenced by name ───────────────
 resources:
@@ -208,9 +204,11 @@ apps:
       - { type: CNAME, name: brevo1._domainkey, content: b1.ofuma-ai.dkim.brevo.com }
       - { type: CNAME, name: brevo2._domainkey, content: b2.ofuma-ai.dkim.brevo.com }
       - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
-      # Old staging names, kept so nothing breaks at the nameserver switch.
-      # Delete in RUNBOOK.md Phase 9 together with the Hetzner staging box.
-      - { type: A, name: piston.stg,   content: 46.225.127.236 }   # PM-Interview-Bank calls this
+      # The Piston box (Hetzner CX23, the old ofuma staging box): Piston only,
+      # kept OFF nagaya because it runs untrusted code in a privileged
+      # container. Grey-clouded: the box gets its own Let's Encrypt cert.
+      # PM-Interview-Bank calls it. Config: boxes/piston/, RUNBOOK.md Phase 9.
+      - { type: A, name: piston.stg,   content: 46.225.127.236 }
 
     sites:
       main:

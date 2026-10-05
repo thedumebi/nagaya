@@ -1,0 +1,117 @@
+# The Piston box: Hetzner CX23 piston.stg.ofuma.ai (46.225.127.236), the old
+# ofuma staging box. Piston runs untrusted code in a PRIVILEGED container, so
+# it lives here, alone, and never on nagaya with the databases and secrets.
+# PM-Interview-Bank's "Run Tests" and coding-spec pipeline call it.
+#
+# Lives on the box at ~/piston (copied from nagaya/boxes/piston, not a git
+# checkout). Two files there are NOT in git, because this repo is public:
+#   .env                  ACME_EMAIL=…  (Let's Encrypt account email)
+#   caddy/piston-auth     piston <bcrypt hash>  (basic-auth user + hash)
+# See README.md.
+#
+# The volumes are the ones the old ofuma compose created, reused on purpose:
+# the installed language runtimes (~5 GB) and Caddy's certificate survive.
+name: piston
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: piston-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"     # Let's Encrypt HTTP-01 challenge (this host is not behind Cloudflare)
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in ~/piston/.env}
+    volumes:
+      # The directory, not the file: a single-file mount pins the old inode
+      # and a reload after editing the Caddyfile silently changes nothing.
+      - ./caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 128m
+
+  piston:
+    # Upstream image, pinned by digest (what :latest resolved to; published 2025-02-08) so the
+    # sandbox can't change under apex-interviewer's validated coding specs. Changing it means
+    # re-running apex-interviewer's `coding:revalidate` against the new image first.
+    image: ghcr.io/engineer-man/piston@sha256:2f66b7456189c4d713aa986d98eccd0b6ee16d26c7ec5f21b30e942756fd127a
+    container_name: piston
+    restart: unless-stopped
+    privileged: true                          # required for isolate / cgroup sandbox
+    mem_limit: 1400m                           # k8s limit; heavy Java/C++ compiles spike to ~1.4 GB
+    # Raise per-request caps so codeRunner.ts's 10s run / 15s compile aren't rejected with HTTP 400
+    # (piston defaults are 3s/10s). Mirrors PM-Interview-Bank/infra/piston/20-deployment.yaml.
+    environment:
+      PISTON_RUN_TIMEOUT: "10000"
+      PISTON_COMPILE_TIMEOUT: "15000"
+      # CPU-time ceilings (piston defaults 3s/10s kill legitimate Java/Python runs) and the
+      # per-stream output cap (default 1 KB: a run that prints more is killed with ALL output lost).
+      # apex-interviewer's PISTON_MAX_RUN_CPU_MS / PISTON_MAX_COMPILE_CPU_MS / PISTON_OUTPUT_MAX_BYTES
+      # must not exceed these, or piston rejects its requests with HTTP 400.
+      PISTON_RUN_CPU_TIME: "10000"
+      PISTON_COMPILE_CPU_TIME: "15000"
+      PISTON_OUTPUT_MAX_SIZE: "65536"
+    tmpfs:
+      - /piston/jobs
+    volumes:
+      - piston_packages:/piston/packages       # cache runtimes across restarts
+    # Piston's entrypoint does a non-idempotent `mkdir /sys/fs/cgroup/isolate`. As a privileged
+    # container it shares the HOST cgroup tree, so it survives restarts and a plain rmdir fails when
+    # per-job child cgroups / procs linger → CrashLoopBackOff. Evict leftover procs, then rmdir the
+    # tree depth-first, before starting. (Mirrors PM-Interview-Bank/infra/piston/20-deployment.yaml.)
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        for _ in $$(seq 1 60); do
+          if [ -d /sys/fs/cgroup/isolate ]; then
+            find /sys/fs/cgroup/isolate -name cgroup.procs 2>/dev/null | while read -r f; do
+              while read -r pid; do echo "$$pid" > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true; done < "$$f"
+            done
+            find /sys/fs/cgroup/isolate -depth -type d -exec rmdir {} + 2>/dev/null || true
+          fi
+          [ -d /sys/fs/cgroup/isolate ] || break
+          sleep 1
+        done
+        exec /piston_api/src/docker-entrypoint.sh
+
+  # One-shot: installs the pinned language runtimes (piston ships with none). Mirrors the k8s
+  # 50-install-runtimes-job.yaml. Hits piston directly on the internal network (bypasses Caddy auth).
+  # Run once after piston is up (idempotent / re-runnable):
+  #   docker compose --profile install run --rm piston-install-runtimes
+  # Versions MUST match PM-Interview-Bank/lib/codeRunner.ts PISTON_VERSION_MAP.
+  piston-install-runtimes:
+    image: curlimages/curl:8.10.1
+    profiles:
+      - install
+    restart: "no"
+    depends_on:
+      - piston
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        PISTON="http://piston:2000/api/v2"
+        echo "waiting for piston API..."
+        until curl -sf "$$PISTON/runtimes" >/dev/null; do sleep 3; done
+        echo "piston up; installing runtimes"
+        for pair in python:3.10.0 node:18.15.0 typescript:5.0.3 java:15.0.2 gcc:10.2.0 go:1.16.2; do
+          lang="$${pair%%:*}"; ver="$${pair##*:}"
+          echo "installing $$lang $$ver"
+          curl -sf -X POST "$$PISTON/packages" -H 'Content-Type: application/json' \
+            -d "{\"language\":\"$$lang\",\"version\":\"$$ver\"}" && echo " ok" || echo " (already installed/failed — continuing)"
+        done
+        echo "installed runtimes:"; curl -s "$$PISTON/runtimes"
+
+volumes:
+  caddy_data:
+    external: true
+    name: ofuma_caddy_data
+  caddy_config:
+    external: true
+    name: ofuma_caddy_config
+  piston_packages:
+    external: true
+    name: ofuma_piston_packages

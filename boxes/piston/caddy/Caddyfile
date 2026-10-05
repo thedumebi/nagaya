@@ -1,0 +1,17 @@
+# Caddy on the Piston box: one host, basic auth, automatic Let's Encrypt.
+{
+	email {$ACME_EMAIL}
+}
+
+piston.stg.ofuma.ai {
+	# basic_auth must NOT cover the ACME HTTP-01 challenge path: Let's Encrypt
+	# validates from several servers, and a 401 on any of them fails the whole
+	# certificate order. Gate everything except the challenge path.
+	@protected not path /.well-known/acme-challenge/*
+	basic_auth @protected {
+		# "piston <bcrypt hash>", kept out of git (this repo is public).
+		# PM-Interview-Bank's PISTON_AUTH_TOKEN is the password it matches.
+		import /etc/caddy/piston-auth
+	}
+	reverse_proxy piston:2000
+}

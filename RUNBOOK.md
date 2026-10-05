@@ -80,7 +80,7 @@ reference material is at the end. The Done column is for you to tick.
 | **6** | Cut over one site at a time: nihongo → abm → dmb + root → ofuma | 🖥️ 💻 🌐 | |
 | **7** | ofuma staging: save its data now, bring it up when wanted | 🖥️ 💻 | |
 | **8** | Backups verified and a restore drill passed | 🖥️ | |
-| **9** | Decommission Hetzner and the migration scaffolding | 🌐 💻 | |
+| **9** | Decommission two Hetzner boxes, make the third the Piston box, remove the migration scaffolding | 🌐 💻 🖥️ | |
 
 > **Nothing is cut over until Phase 6.** Phases 0–5 build the new home next to
 > the old ones. Until a site's DNS record moves in §6.x, visitors never touch
@@ -1951,49 +1951,117 @@ restore of a live database is `nagaya restore <db> latest --replace`
 ## Phase 9 — Decommission
 
 After **7 days** with every site on nagaya and nothing odd in
-`/srv/nagaya/logs/alerts-memory.log`:
+`/srv/nagaya/logs/alerts-memory.log`. Two Hetzner boxes go; the third, the old
+staging box, stays as the **Piston box**: Piston runs untrusted code in a
+privileged container, so it must never sit on nagaya next to the databases
+and keys (see `boxes/piston/README.md`).
 
-**9.1** 🌐 **Hetzner Cloud** — for each of `dmb-prod`, `ofuma-prod`, `ofuma-stg`:
-1. **Snapshots** → **Take snapshot**. It costs cents a month, and it is the last
-   copy of the box exactly as it was.
-2. Then **Delete** the server.
+**9.1** 🌐 **Hetzner Cloud** *(done 2026-10-06)*:
+- `dmb-prod`, `ofuma-prod`: **Snapshots** → **Take snapshot**, then **Delete**.
+  Keep the snapshots for a month, then delete them too.
+- `ofuma-stg`: **snapshot only**, as the safety net for 9.3. It is not deleted.
 
-Keep the snapshots for a month, then delete them too.
+**9.2** 💻 **nagaya** — the migration scaffolding in `sites.yaml` *(done 2026-10-06)*:
+- the `hetzner-*` entries under `origins:` are gone;
+- `doca.stg` and `api-doca.stg` are gone from `apps.ofuma.dns`;
+- `piston.stg` **stays**: it is the Piston box's address (grey-clouded; the
+  box gets its own Let's Encrypt certificate).
 
-**9.2** 💻 **nagaya** — remove the migration scaffolding from `sites.yaml`:
-- the `hetzner-*` entries under `origins:`;
-- the three old staging records under `apps.ofuma.dns` (`doca.stg`,
-  `api-doca.stg`, `piston.stg`). Before deleting `piston.stg`, ⚠️ disable
-  PM-Interview-Bank's code runner, or clear its `PISTON_*` settings on Vercel:
-  it calls that host, and Piston is gone.
+The render changed no generated file, so Terraform changed no DNS.
 
-Render → PR → merge. Expect only deletions in the plan.
+**9.3** 🖥️ **The Piston box** — `ofuma-stg` (`46.225.127.236`) becomes
+Caddy + Piston only, configured from `boxes/piston/` in this repo instead of
+the old ofuma checkout. PM-Interview-Bank changes nothing: same URL, same
+token, same installed runtimes (the volumes are reused).
 
-**9.3** 💻 **The app repos**, and the leftovers in this one:
-- **dmb.futari:**
-  - delete `Caddyfile` and the `futari/` directory (both live in nagaya now);
-  - delete the `caddy`, `postgres` and `redis` services from `docker-compose.prod.yml`, or the whole file;
-  - delete `ci_deploy_key*` from the working tree;
-  - mark DEPLOY.md as historical, pointing at nagaya;
-  - the `k8s/` tree and the `deploy-production.yaml` / `deploy-staging.yaml`
-    workflows were already dead and can go too.
-- **abm.futari, nihongo.futari:** delete `docker-compose.prod.yml`, the
-  unused `Caddyfile`, and `ci_deploy_key*`.
-- **ofuma:**
-  - delete the four `deploy-*-vps.yaml` callers and `deploy-vps.yaml`;
-  - delete `Caddyfile` and the Piston services;
-  - DEPLOY-HETZNER.md becomes historical;
-  - check DigitalOcean, as `DEPLOY-HETZNER.md` asked, for any surviving DOKS cluster or managed Postgres.
-- **Every repo:** delete the old Actions secrets: `DEPLOY_HOST`, `DEPLOY_USER`,
-  `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, `DEPLOY_PORT`, and ofuma's `PROD_HOST` / `STG_HOST`.
+**9.3.1** — clean the box, with no effect on Piston *(done 2026-10-06)*:
+- ofuma's CI deploy key (`github-actions-vps-deploy`) removed from
+  `~/.ssh/authorized_keys`; only your own key is left
+  (`authorized_keys.bak-2026-10-06` is the old file);
+- the six stopped ofuma containers, their images, 13.3 GB of build cache, and
+  the `ofuma_db` / `ofuma_cache` volumes removed (the staging database was
+  saved in §7.1 and lives on nagaya). Disk 78% → 40%.
+
+**9.3.2** 💻 → 🖥️ — put `~/piston` in place. **No downtime**: nothing is
+started yet.
+```bash
+# 💻 from the nagaya repo
+ssh deploy@46.225.127.236 'mkdir -p ~/piston/caddy && chmod 700 ~/piston'
+scp boxes/piston/docker-compose.yml deploy@46.225.127.236:piston/
+scp boxes/piston/caddy/Caddyfile deploy@46.225.127.236:piston/caddy/
+```
+```bash
+# 🖥️ on the box: the two files that never go in git, copied from what runs today
+cd ~/piston
+umask 077
+echo "ACME_EMAIL=$(docker inspect ofuma-caddy -f '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^ACME_EMAIL=//p')" > .env
+grep -A1 'basic_auth @protected' ~/ofuma/Caddyfile | tail -1 | sed 's/^[[:space:]]*//' > caddy/piston-auth
+cat caddy/piston-auth | cut -c1-12        # expect: piston $2a$14
+docker compose config --quiet && echo "compose ok"
+docker run --rm --env-file .env -v ~/piston/caddy:/etc/caddy:ro caddy:2-alpine \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | tail -1   # "Valid configuration"
+```
+
+**9.3.3** 🖥️ — **the switch. Piston is down for ~10–30 s.** Do it at a quiet
+moment, with PM-Interview-Bank open to test straight after.
+```bash
+docker stop piston ofuma-caddy && docker rename piston piston-old   # kept, not removed: the rollback
+cd ~/piston && docker compose up -d
+docker compose ps        # piston-caddy and piston: Up
+```
+The new containers mount the same volumes (runtimes, certificate). The old
+ones stay stopped, untouched, until 9.3.5.
+
+**9.3.4** 💻 — verify, with PM-Interview-Bank's token (`PISTON_AUTH_TOKEN`)
+in `$PISTON_AUTH_TOKEN`. The checks are in `boxes/piston/README.md` → *Checks*:
+401 without auth, the six runtimes at their pinned versions, and `print(6*7)`
+returning `42`. Then one **Run Tests** in PM-Interview-Bank.
+
+> **Rollback** (until 9.3.5), seconds, and nothing is recreated:
+> ```bash
+> cd ~/piston && docker compose down
+> docker rename piston-old piston && docker start piston ofuma-caddy
+> ```
+
+**9.3.5** 🖥️ — finish:
+```bash
+docker rm piston-old ofuma-caddy
+docker image prune -af                # the images only the old containers used
+rm -rf ~/ofuma ~/ofuma-stg-final.sql.gz ~/.ssh/authorized_keys.bak-2026-10-06
+sudo ufw status                     # expect: only 22, 80, 443 allowed
+systemctl is-enabled unattended-upgrades
+```
+🌐 Hetzner Cloud: rename the server `piston`.
+
+**9.4** 💻 **The app repos**, and the leftovers in this one:
+- *(done 2026-10-06)* **dmb.futari, abm.futari, nihongo.futari:** `Caddyfile`
+  and `docker-compose.prod.yml` removed; in dmb also `futari/` (identical to
+  `static/futari` here), `k8s/`, the dead Kubernetes workflows and their
+  scripts. Each DEPLOY.md is marked historical. The pushes deployed nothing:
+  no service's files changed.
+- *(done 2026-10-06)* **ofuma:** the four `deploy-*-vps.yaml` workflows and
+  `deploy-vps.yaml` removed, on `master` and `stg`.
+- *(done 2026-10-06)* **Secrets:** `DEPLOY_*` removed from the four app repos,
+  and ofuma's `PROD_HOST` / `STG_HOST`. Each futari repo holds only its four
+  `NAGAYA_*` secrets.
+- *(done 2026-10-06)* **The migration branches** (`nagaya/frontend-runtime-env`,
+  `nagaya/doca-standard-db-env`): deleted; they were never pushed.
+- **ofuma, after 9.3:** delete `docker-compose.prod.yml` and `Caddyfile`
+  (Piston's config is `boxes/piston/` now); mark `DEPLOY-HETZNER.md`
+  historical.
+- **ofuma + DigitalOcean:** check DigitalOcean for any surviving DOKS cluster
+  or managed Postgres, as `DEPLOY-HETZNER.md` asked. Then delete the dead
+  Kubernetes workflows (`build-and-deploy.yaml`, `deploy-*-production.yaml`,
+  `deploy-*-staging.yaml`) and their secrets (`DIGITALOCEAN_ACCESS_TOKEN`,
+  `DOCKERHUB_*`).
 - **App env files:** the per-app R2 keys (`S3_*`, `AWS_*`) are unused now that
-  nagaya runs backups. Remove them, then revoke the matching R2 tokens in Cloudflare.
-- **The migration branches:** once merged, delete
-  `nagaya/frontend-runtime-env` in `dmb.futari`, `abm.futari` and
-  `nihongo.futari`, and `nagaya/doca-standard-db-env` in the ofuma repo
-  (`git branch -d <branch>`, and on GitHub if you pushed them).
+  nagaya runs backups. Remove them, then revoke the matching R2 tokens in
+  Cloudflare. (This touches each backend's env file, so it deploys each
+  backend once.)
+- **PM-Interview-Bank:** point `infra/piston/README.md` → *Where production
+  runs* at `nagaya/boxes/piston/` instead of ofuma's compose file.
 
-**9.4** 🌐 **Namecheap** — **Email Forwarding** rules for both domains are
+**9.5** 🌐 **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
 by mistake.
 
