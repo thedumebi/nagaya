@@ -1983,7 +1983,8 @@ token, same installed runtimes (the volumes are reused).
   saved in §7.1 and lives on nagaya). Disk 78% → 40%.
 
 **9.3.2** 💻 → 🖥️ — put `~/piston` in place. **No downtime**: nothing is
-started yet.
+started yet. *(done 2026-10-06: `piston-auth` matches the live hash, compose
+and Caddy both validate)*
 ```bash
 # 💻 from the nagaya repo
 ssh deploy@46.225.127.236 'mkdir -p ~/piston/caddy && chmod 700 ~/piston'
