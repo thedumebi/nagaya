@@ -1860,10 +1860,9 @@ The staging **frontends** need nothing here. Their values are in
 `ofuma/frontend/runtime-env/staging.env` and `doca/web/runtime-env/staging.env`
 (§1.4), already pointing at the single-level names. Make sure §1.4 is merged
 on `stg` too.
-🌐 **Google Cloud Console** → **APIs & Services** → **Credentials** → the
-staging OAuth client → **Authorised redirect URIs** / **JavaScript origins**:
-add the `doca-stg.ofuma.ai` equivalents of any `doca.stg.ofuma.ai` entries.
-The old ones can go in Phase 9.
+
+No OAuth change: doca has no Google login, and ofuma's staging names
+(`stg.ofuma.ai`, `api-stg.ofuma.ai`) are unchanged.
 
 ### 7.4 💻 — point the staging names at nagaya
 
@@ -1993,9 +1992,6 @@ Render → PR → merge. Expect only deletions in the plan.
 **9.4** 🌐 **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
 by mistake.
-
-**9.5** 🌐 **Google Cloud Console** — remove the `doca.stg` / `api-doca.stg`
-OAuth origins and redirect URIs.
 
 ---
 
