@@ -474,6 +474,10 @@ cmd_apply() {
     # and re-read the secrets in case they changed too.
     if [[ "$(sha256sum "$ROOT/bin/nagaya")" != "$script_before" ]]; then
       info "nagaya itself changed; continuing with the new version"
+      # Release the lock first: the new run starts under dotenvx, which keeps
+      # inherited descriptors open, so holding fd 9 across the exec would make
+      # the new nagaya wait for a lock its own parent holds.
+      exec 9>&-
       NAGAYA_SECRETS_LOADED='' exec "$ROOT/bin/nagaya" apply --no-pull
     fi
   fi
