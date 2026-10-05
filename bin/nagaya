@@ -485,10 +485,15 @@ newest_backup_key() { # <bucket> <database>
 }
 
 cmd_backup() {
-  local any_failed=0 timestamp
+  local any_failed=0 timestamp handled=0 expected
   timestamp="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-  while IFS=$'\t' read -r database postgres_container bucket; do
+  expected="$(plan '.backups.databases | length')"
+  # The list arrives on fd 3, not stdin: `r2` runs `docker run -i`, which
+  # reads stdin, and once swallowed the rest of the list, so every night only
+  # the first database was backed up while the run still reported success.
+  while IFS=$'\t' read -r -u 3 database postgres_container bucket; do
     [[ -n "$database" ]] || continue
+    handled=$((handled + 1))
     if ! database_exists "$postgres_container" "$database"; then info "$database: does not exist yet, skipped"; continue; fi
     local object_key="$database/$database-$timestamp.sql.gz"
     info "$database → s3://$bucket/$object_key"
@@ -500,7 +505,10 @@ cmd_backup() {
     else
       warn "$database: dump or upload failed"; any_failed=1
     fi
-  done < <(plan '.backups.databases[] | [.name, .resource, .bucket] | @tsv')
+  done 3< <(plan '.backups.databases[] | [.name, .resource, .bucket] | @tsv')
+  if (( handled != expected )); then
+    warn "handled $handled of $expected databases: the run stopped early"; any_failed=1
+  fi
   return $any_failed
 }
 
