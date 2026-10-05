@@ -460,7 +460,17 @@ cmd_rollback() { # <project>
 # ───────────────────────────── reconciling ─────────────────────────────
 
 cmd_apply() {
-  [[ "${1:-}" == --no-pull ]] || { info "git pull"; git -C "$ROOT" pull --ff-only --quiet; }
+  if [[ "${1:-}" != --no-pull ]]; then
+    local script_before; script_before="$(sha256sum "$ROOT/bin/nagaya")"
+    info "git pull"; git -C "$ROOT" pull --ff-only --quiet
+    # The pull may bring a new nagaya, with compose files and a plan.json that
+    # only the new code understands. Carry on as the new code, not this one,
+    # and re-read the secrets in case they changed too.
+    if [[ "$(sha256sum "$ROOT/bin/nagaya")" != "$script_before" ]]; then
+      info "nagaya itself changed; continuing with the new version"
+      NAGAYA_SECRETS_LOADED='' exec "$ROOT/bin/nagaya" apply --no-pull
+    fi
+  fi
   mkdir -p "$TAGS_DIR" "$STAGING_STATE_DIR" "$LOGS_DIR"
   chmod 700 "$KEYS_DIR" "$ROOT/certs" 2>/dev/null || true
 
