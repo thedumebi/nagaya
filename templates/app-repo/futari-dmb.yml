@@ -31,8 +31,58 @@ env:
   IMAGE_PREFIX: ghcr.io/thedumebi/futari-dmb
 
 jobs:
+  changes:
+    # Which services this push touches, so only those are built and
+    # deployed (nagaya deploy --only). Shared code, dependencies and this
+    # workflow count for every service. A manual run, a new branch or a
+    # force-push deploys everything.
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          own_paths() {
+            case "$1" in
+              backend) echo '^dmb/backend/' ;;
+              frontend) echo '^dmb/frontend/' ;;
+            esac
+          }
+          build_entry() {
+            case "$1" in
+              backend) echo '{"service":"backend","dockerfile":"dmb/backend/Dockerfile"}' ;;
+              frontend) echo '{"service":"frontend","dockerfile":"dmb/frontend/Dockerfile"}' ;;
+            esac
+          }
+          shared='^(dmb/shared/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|turbo\.json$|\.dockerignore$|tsconfig[^/]*\.json$|\.github/workflows/deploy-nagaya\.yml$)'
+          if [ "$EVENT" != push ] || [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed=ALL
+          else
+            changed="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          fi
+          services=() entries=()
+          for service in backend frontend; do
+            if [ "$changed" = ALL ] || grep -qE "$(own_paths "$service")|$shared" <<<"$changed"; then
+              services+=("$service"); entries+=("$(build_entry "$service")")
+            fi
+          done
+          echo "services=$(printf '%s\n' "${services[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(printf '%s\n' "${entries[@]}" | jq -sc '{include: .}')" >> "$GITHUB_OUTPUT"
+          echo "Building and deploying: ${services[*]:-nothing, no service files changed}"
+
   test:
     name: Lint, typecheck, test
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,15 +102,10 @@ jobs:
 
   build:
     name: Build ${{ matrix.service }}
-    needs: test
+    needs: [changes, test]
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        include:
-          - service: backend
-            dockerfile: dmb/backend/Dockerfile
-          - service: frontend
-            dockerfile: dmb/frontend/Dockerfile
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
@@ -81,8 +126,8 @@ jobs:
 
   deploy:
     name: Deploy to nagaya
-    needs: build
-    if: github.event_name == 'push' || inputs.deploy
+    needs: [changes, build]
+    if: (github.event_name == 'push' || inputs.deploy) && needs.changes.outputs.services != '[]'
     runs-on: ubuntu-latest
     env:
       HOST: ${{ secrets.NAGAYA_HOST }}
@@ -95,8 +140,8 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           # The key is pinned to `nagaya ssh-dispatch`, which accepts only
-          # "deploy <project> <sha>" (and "apply"). nagaya pulls the images,
+          # "deploy <project> <sha> [--only <services>]" (and "apply"). nagaya pulls the images,
           # creates/updates the database role, starts the containers and
           # health-checks them, rolling back to the previous tag on failure.
           ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" \
-            "deploy ${{ env.PROJECT }} ${{ github.sha }}"
+            "deploy ${{ env.PROJECT }} ${{ github.sha }} --only ${{ join(fromJSON(needs.changes.outputs.services), ',') }}"

@@ -29,4 +29,4 @@ How a change flows:
 - **The registry:** edit `sites.yaml` → `pnpm render` → PR (CI shows the
   Terraform plan) → merge → Terraform applies DNS → `nagaya apply` on the box.
 - **An app:** push to its repo → its CI builds images to GHCR →
-  `nagaya deploy <project> <sha>`.
+  `nagaya deploy <project> <sha> --only <the services the push changed>`.

@@ -828,7 +828,7 @@ Rules for the compose files that keep this true:
 
 Every repo's CI SSHes in as `deploy` with one shared key. On the box that key
 is pinned to `nagaya ssh-dispatch`, which accepts only `deploy <project> <sha>`
-or `apply` and refuses anything else. So a leaked key can redeploy a commit
+(optionally `--only <services>`) or `apply` and refuses anything else. So a leaked key can redeploy a commit
 that is already in GHCR, and nothing more.
 
 💻 **LAPTOP**:
@@ -1903,7 +1903,11 @@ While staging is down, they show the "Staging is off" page.
 ```bash
 nagaya stg down ofuma     # when finished: frees ~250 MB, keeps data and DNS
 nagaya stg up ofuma       # when needed again (or push to stg)
+nagaya stg down ofuma doca   # just doca; main keeps running
+nagaya stg up ofuma doca     # just doca, starting main first if it is down
 ```
+Stopping `main` stops doca as well, because doca needs it (`network: main` in
+`sites.yaml`); nagaya says so when it does.
 Staging is a no-op for backups while it is down: the nightly job still dumps
 `ofuma_stg`, since it exists, and that is cheap.
 
@@ -1999,7 +2003,7 @@ by mistake.
 
 | Change | How it ships |
 |---|---|
-| **App code** (any app repo) | Push to `master` (or a staging branch). That repo's **Deploy (nagaya)** workflow (in ofuma: *Deploy ofuma* or *Deploy doca*, by the paths changed) tests, builds the images, pushes them to GHCR and runs `nagaya deploy <project> <sha>`. If health checks fail, nagaya rolls back to the previous tag and the job goes red. |
+| **App code** (any app repo) | Push to `master` (or a staging branch). That repo's **Deploy (nagaya)** workflow (in ofuma: *Deploy ofuma* or *Deploy doca*, by the paths changed) works out which services the push touched (their own folder, or shared code, the lockfile or the workflow for all of them), then tests, builds **only those** images, pushes them to GHCR and runs `nagaya deploy <project> <sha> --only <services>`. A frontend-only push never restarts the backend. A manual run deploys every service. If health checks fail, nagaya rolls those services back and the job goes red. |
 | **App config / secrets** | `dotenvx set KEY value -f <app>/backend/.env.production`, commit, push. The env file is baked into the image, so a config change is a deploy like any other. A changed `PG_PASSWORD` is applied to the role by that deploy. |
 | **The registry** (`sites.yaml`) | Branch, edit, `pnpm render`, commit both, open a PR. CI shows the Terraform plan. Merge → Terraform apply → `nagaya apply`. |
 | **nagaya itself** (`bin/nagaya`, renderer, static page) | PR → merge; `nagaya apply` pulls it. |
@@ -2055,8 +2059,11 @@ covers it. In short:
 `nagaya deploy` already rolls back on its own if the new containers never
 pass their health checks. For a deploy that is healthy but wrong:
 ```bash
-nagaya rollback <project>          # redeploys the tag before the current one
+nagaya rollback <project>          # back to every service's version before the last deploy
 ```
+Each service has its own version (`nagaya status` shows them, e.g.
+`backend 447cf59 · frontend 9a1c2d3`), so a rollback after a frontend-only
+deploy returns only the frontend; running it again swaps back.
 Or push a revert to the repo, which is the better record. A rollback does not
 undo migrations: Drizzle migrations only go forward. Write the next migration
 to be compatible with the previous code if you think you might need one.

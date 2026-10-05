@@ -577,9 +577,18 @@ gets no `www` (`www.stg` would be two levels).
 **On and off:**
 
 ```bash
-nagaya stg up ofuma      # start every ofuma staging project
-nagaya stg down ofuma    # stop them; volumes, database and DNS stay
+nagaya stg up ofuma        # start every ofuma staging site
+nagaya stg down ofuma      # stop them; volumes, database and DNS stay
+nagaya stg up ofuma doca   # one site, and anything it needs (main, if down)
+nagaya stg down ofuma main # one site, and anything that needs it (doca too)
 ```
+
+**What a site needs** is inferred from `network:`. A site that joins
+another site's network (doca: `network: main`) reaches that site's
+containers privately, so it needs that site running: stopping main stops
+doca too, and starting doca (or a doca-only staging deploy from CI) starts
+main first. Sites without `network:` stand alone. A dependency through a
+public URL (`https://api-stg…`) is invisible to nagaya.
 
 A push to the staging branch (`stg`) deploys and switches that
 project on. Up/down is runtime state on the box, not a registry change, so no
