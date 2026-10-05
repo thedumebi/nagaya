@@ -550,7 +550,7 @@ firewall; Docker gets a daemon config; the repo lives in `/srv/nagaya`.
 
 **2.1** 🌐 **BROWSER (netcup)** — order the server. *(done: the box exists, currently with netcup's default Debian; §2.2 replaces it with Ubuntu)*
 
-1. `https://www.netcup.com/en/server/vps` → **VPS 500 G12** (2 vCore / 4 GB DDR5 / 128 GB NVMe).
+1. `https://www.netcup.com/en/server/vps` → **VPS 500 G12.5** (2 vCore / 4 GB / 64 GB SSD). Generation 12, which Nooklet runs on (128 GB NVMe), is no longer sold.
 2. In the configurator:
 
    | Option | Choose | Why |
@@ -559,7 +559,7 @@ firewall; Docker gets a daemon config; the repo lives in `/srv/nagaya`.
    | **Location** | **Nuremberg, Germany** (+€0.90/mo) | ⚠️ **Irreversible.** The location cannot change after setup. Nuremberg matches Nooklet's box, and Hetzner's Falkenstein is next door. |
 
    There is no OS choice at checkout. You install it in §2.2.
-   Expected total: **~€7.71/mo incl. 19% VAT**, no setup fee.
+   Expected total: around **€9.50/mo** (netcup's listed price in October 2026), no setup fee.
 3. Complete checkout. **Expect a manual review** ("Your order will be checked
    by one of our employees shortly"), usually the same day. Answer any ID or
    payment questions promptly. Meanwhile, see [Working while blocked](#working-while-blocked).

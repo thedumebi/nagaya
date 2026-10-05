@@ -34,7 +34,7 @@ How the pieces work today:
   `git reset --hard` and then `docker compose up --build`.
 - **DNS for both domains is Namecheap BasicDNS.**
 
-**The goal** is one netcup VPS 500 G12 (the same spec as Nooklet's box) running all of it except Piston:
+**The goal** is one netcup VPS 500 G12.5 (Nooklet's box is the older VPS 500 G12: same CPU and memory, but 128 GB NVMe, where G12.5 has 64 GB SSD; G12 is no longer sold) running all of it except Piston:
 
 - **One registry, `sites.yaml`, declares everything.** Adding a domain or
   subdomain is an entry and a merge.
@@ -55,7 +55,7 @@ How the pieces work today:
 
 | Area | Decision |
 |---|---|
-| Server | netcup **VPS 500 G12**, Nuremberg, **monthly / no commitment**, hostname `nagaya` |
+| Server | netcup **VPS 500 G12.5** (2 vCore, 4 GB, 64 GB SSD), Nuremberg, **monthly / no commitment**, hostname `nagaya` |
 | Orchestration | **Docker Compose + Caddy**, not k3s. The apps are already compose-shaped, and k3s costs ~700 MB of a 4 GB box |
 | What runs | futari.live (static), dmb, abm, nihongo, ofuma (main + doca) prod, ofuma staging (off by default). **Piston is dropped** |
 | Registry | `sites.yaml` in this repo, rendered by `pnpm render` (TypeScript + zod) into `generated/` |
@@ -74,11 +74,11 @@ How the pieces work today:
 
 | Item | Monthly |
 |---|---|
-| netcup VPS 500 G12, Nuremberg, no commitment | ~€7.71 incl. VAT |
+| netcup VPS 500 G12.5, Nuremberg, no commitment | ~€9.50 (netcup's listed price, October 2026; your invoice is the truth) |
 | Cloudflare (DNS, CDN, WAF, Origin CA, Email Routing) | €0 |
 | Cloudflare R2 (backups + Terraform state, well under 10 GB) | €0 |
 | GHCR (private images, within the free storage) | €0 |
-| **Total for compute** | **~€7.71/mo**, replacing three Hetzner boxes |
+| **Total for compute** | **~€9.50/mo**, replacing three Hetzner boxes |
 
 ---
 
@@ -90,8 +90,8 @@ How the pieces work today:
                   Cloudflare edge (proxied DNS, WAF, Full strict)
                             │  443 only, from Cloudflare's ranges (ufw)
                             ▼
- ┌──────────────────────── netcup VPS 500 G12 "nagaya" (NUE) ────────────────────────┐
- │  2 vCPU / 4 GB / 128 GB NVMe · Ubuntu 24.04 Minimal · Docker                       │
+ ┌─────────────────────── netcup VPS 500 G12.5 "nagaya" (NUE) ───────────────────────┐
+ │  2 vCPU / 4 GB / 64 GB SSD · Ubuntu 24.04 Minimal · Docker                         │
  │                                                                                    │
  │   caddy ──(each site's net)─▶ futari-{dmb,abm,nihongo}-frontend /srv/static/futari │
  │     │                       ofuma-main-frontend · backend (api.)                   │
