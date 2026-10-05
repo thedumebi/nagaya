@@ -1834,6 +1834,7 @@ dotenvx set TRUSTED_PROXY_CIDRS "172.16.0.0/12" -f $E
 dotenvx set ALLOWED_ORIGINS "https://stg.ofuma.ai,https://doca-stg.ofuma.ai" -f $E
 dotenvx set OFUMA_DOCA_URL "https://doca-stg.ofuma.ai" -f $E
 dotenvx set DOCA_SITE_URL  "https://doca-stg.ofuma.ai" -f $E
+dotenvx set COOKIE_DOMAIN  ".ofuma.ai" -f $E   # was .stg.ofuma.ai, which doca-stg.ofuma.ai is not under
 
 # doca: the same role and password (it is the same database)
 E=doca/api/.env.staging
@@ -1849,6 +1850,12 @@ dotenvx set DOCA_OFUMA_API_URL "https://stg.ofuma.ai/api" -f $E
 git commit -am "ofuma + doca staging: nagaya role, Redis namespace, single-level hostnames" && git push
 unset STGPW REDISPW
 ```
+> **Why `COOKIE_DOMAIN=.ofuma.ai` is safe for staging:** staging's
+> `COOKIE_PREFIX` is `ofuma-stg` (production's is `ofuma`), so the cookie
+> *names* differ. Production's session cookies reach staging and are ignored,
+> and the reverse (see `ofuma/backend/src/lib/auth-cookie-config.ts`). The
+> old `.stg.ofuma.ai` only worked while doca was `doca.stg.ofuma.ai`.
+
 The staging **frontends** need nothing here. Their values are in
 `ofuma/frontend/runtime-env/staging.env` and `doca/web/runtime-env/staging.env`
 (§1.4), already pointing at the single-level names. Make sure §1.4 is merged

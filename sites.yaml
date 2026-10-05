@@ -192,7 +192,6 @@ apps:
     domain: ofuma.ai
     defaults:
       origin: nagaya
-      stg_origin: hetzner-ofuma-stg
       postgres: pg-main
       database: ofuma                      # main + doca share one database, as today
       redis: redis-ofuma
