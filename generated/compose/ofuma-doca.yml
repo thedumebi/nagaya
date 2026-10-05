@@ -2,7 +2,7 @@
 name: ofuma-doca
 services:
   doca-api:
-    image: ghcr.io/thedumebi/ofuma-doca-doca-api:${TAG:?not deployed yet; run nagaya deploy ofuma-doca <tag>}
+    image: ghcr.io/thedumebi/ofuma-doca-doca-api:${TAG_DOCA_API:?not deployed yet; run nagaya deploy ofuma-doca <tag>}
     container_name: ofuma-doca-doca-api
     restart: unless-stopped
     command:
@@ -21,7 +21,7 @@ services:
         aliases:
           - doca-api
   doca-web:
-    image: ghcr.io/thedumebi/ofuma-doca-doca-web:${TAG:?not deployed yet; run nagaya deploy ofuma-doca <tag>}
+    image: ghcr.io/thedumebi/ofuma-doca-doca-web:${TAG_DOCA_WEB:?not deployed yet; run nagaya deploy ofuma-doca <tag>}
     container_name: ofuma-doca-doca-web
     restart: unless-stopped
     depends_on:

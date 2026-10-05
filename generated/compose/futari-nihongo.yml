@@ -2,7 +2,7 @@
 name: futari-nihongo
 services:
   backend:
-    image: ghcr.io/thedumebi/futari-nihongo-backend:${TAG:?not deployed yet; run nagaya deploy futari-nihongo <tag>}
+    image: ghcr.io/thedumebi/futari-nihongo-backend:${TAG_BACKEND:?not deployed yet; run nagaya deploy futari-nihongo <tag>}
     container_name: futari-nihongo-backend
     restart: unless-stopped
     command:
@@ -24,7 +24,7 @@ services:
           - backend
           - nihongo-backend
   frontend:
-    image: ghcr.io/thedumebi/futari-nihongo-frontend:${TAG:?not deployed yet; run nagaya deploy futari-nihongo <tag>}
+    image: ghcr.io/thedumebi/futari-nihongo-frontend:${TAG_FRONTEND:?not deployed yet; run nagaya deploy futari-nihongo <tag>}
     container_name: futari-nihongo-frontend
     restart: unless-stopped
     depends_on:

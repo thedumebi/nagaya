@@ -25,6 +25,7 @@
       "compose": "generated/compose/futari-dmb.yml",
       "network": "futari-dmb",
       "ownsNetwork": true,
+      "needs": [],
       "attach": [
         {
           "container": "pg-main",
@@ -58,6 +59,7 @@
           "key": "backend",
           "container": "futari-dmb-backend",
           "image": "ghcr.io/thedumebi/futari-dmb-backend",
+          "tagVariable": "TAG_BACKEND",
           "port": 3006,
           "health": "/healthcheck",
           "nodeEnv": "production",
@@ -77,6 +79,7 @@
           "key": "frontend",
           "container": "futari-dmb-frontend",
           "image": "ghcr.io/thedumebi/futari-dmb-frontend",
+          "tagVariable": "TAG_FRONTEND",
           "port": 8080,
           "health": null,
           "nodeEnv": "production",
@@ -94,6 +97,7 @@
       "compose": "generated/compose/futari-abm.yml",
       "network": "futari-abm",
       "ownsNetwork": true,
+      "needs": [],
       "attach": [
         {
           "container": "pg-main",
@@ -127,6 +131,7 @@
           "key": "backend",
           "container": "futari-abm-backend",
           "image": "ghcr.io/thedumebi/futari-abm-backend",
+          "tagVariable": "TAG_BACKEND",
           "port": 3006,
           "health": "/healthcheck",
           "nodeEnv": "production",
@@ -146,6 +151,7 @@
           "key": "frontend",
           "container": "futari-abm-frontend",
           "image": "ghcr.io/thedumebi/futari-abm-frontend",
+          "tagVariable": "TAG_FRONTEND",
           "port": 8080,
           "health": null,
           "nodeEnv": "production",
@@ -163,6 +169,7 @@
       "compose": "generated/compose/futari-nihongo.yml",
       "network": "futari-nihongo",
       "ownsNetwork": true,
+      "needs": [],
       "attach": [
         {
           "container": "pg-main",
@@ -196,6 +203,7 @@
           "key": "backend",
           "container": "futari-nihongo-backend",
           "image": "ghcr.io/thedumebi/futari-nihongo-backend",
+          "tagVariable": "TAG_BACKEND",
           "port": 3008,
           "health": "/healthcheck",
           "nodeEnv": "production",
@@ -215,6 +223,7 @@
           "key": "frontend",
           "container": "futari-nihongo-frontend",
           "image": "ghcr.io/thedumebi/futari-nihongo-frontend",
+          "tagVariable": "TAG_FRONTEND",
           "port": 8080,
           "health": null,
           "nodeEnv": "production",
@@ -232,6 +241,7 @@
       "compose": "generated/compose/ofuma-main.yml",
       "network": "ofuma-main",
       "ownsNetwork": true,
+      "needs": [],
       "attach": [
         {
           "container": "pg-main",
@@ -263,6 +273,7 @@
           "key": "backend",
           "container": "ofuma-main-backend",
           "image": "ghcr.io/thedumebi/ofuma-main-backend",
+          "tagVariable": "TAG_BACKEND",
           "port": 3004,
           "health": "/healthcheck",
           "nodeEnv": "production",
@@ -282,6 +293,7 @@
           "key": "frontend",
           "container": "ofuma-main-frontend",
           "image": "ghcr.io/thedumebi/ofuma-main-frontend",
+          "tagVariable": "TAG_FRONTEND",
           "port": 8080,
           "health": null,
           "nodeEnv": "production",
@@ -299,6 +311,7 @@
       "compose": "generated/compose/ofuma-main-stg.yml",
       "network": "ofuma-main-stg",
       "ownsNetwork": true,
+      "needs": [],
       "attach": [
         {
           "container": "pg-main",
@@ -330,6 +343,7 @@
           "key": "backend",
           "container": "ofuma-main-stg-backend",
           "image": "ghcr.io/thedumebi/ofuma-main-backend",
+          "tagVariable": "TAG_BACKEND",
           "port": 3004,
           "health": "/healthcheck",
           "nodeEnv": "staging",
@@ -349,6 +363,7 @@
           "key": "frontend",
           "container": "ofuma-main-stg-frontend",
           "image": "ghcr.io/thedumebi/ofuma-main-frontend",
+          "tagVariable": "TAG_FRONTEND",
           "port": 8080,
           "health": null,
           "nodeEnv": "staging",
@@ -366,6 +381,9 @@
       "compose": "generated/compose/ofuma-doca.yml",
       "network": "ofuma-main",
       "ownsNetwork": false,
+      "needs": [
+        "ofuma-main"
+      ],
       "attach": [
         {
           "container": "pg-main",
@@ -397,6 +415,7 @@
           "key": "doca-api",
           "container": "ofuma-doca-doca-api",
           "image": "ghcr.io/thedumebi/ofuma-doca-doca-api",
+          "tagVariable": "TAG_DOCA_API",
           "port": 3010,
           "health": "/healthcheck",
           "nodeEnv": "production",
@@ -416,6 +435,7 @@
           "key": "doca-web",
           "container": "ofuma-doca-doca-web",
           "image": "ghcr.io/thedumebi/ofuma-doca-doca-web",
+          "tagVariable": "TAG_DOCA_WEB",
           "port": 8080,
           "health": null,
           "nodeEnv": "production",
@@ -433,6 +453,9 @@
       "compose": "generated/compose/ofuma-doca-stg.yml",
       "network": "ofuma-main-stg",
       "ownsNetwork": false,
+      "needs": [
+        "ofuma-main-stg"
+      ],
       "attach": [
         {
           "container": "pg-main",
@@ -464,6 +487,7 @@
           "key": "doca-api",
           "container": "ofuma-doca-stg-doca-api",
           "image": "ghcr.io/thedumebi/ofuma-doca-doca-api",
+          "tagVariable": "TAG_DOCA_API",
           "port": 3010,
           "health": "/healthcheck",
           "nodeEnv": "staging",
@@ -483,6 +507,7 @@
           "key": "doca-web",
           "container": "ofuma-doca-stg-doca-web",
           "image": "ghcr.io/thedumebi/ofuma-doca-doca-web",
+          "tagVariable": "TAG_DOCA_WEB",
           "port": 8080,
           "health": null,
           "nodeEnv": "staging",

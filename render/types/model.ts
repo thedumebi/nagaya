@@ -66,6 +66,7 @@ export const serviceSchema = serviceConfigSchema.pick({ port: true, mem: true })
   key: z.string(), // as written in sites.yaml: backend, frontend, doca-api
   container: z.string(), // <project>-<key>
   image: z.string(), // <registry>/<app>-<site>-<key>, no tag
+  tagVariable: z.string(), // TAG_<KEY>: its image tag in the project's tags file, so services deploy separately
   command: z.string().nullable(),
   health: z.string().nullable(),
   mounts: z.array(mountConfigSchema),
@@ -107,6 +108,9 @@ export const projectSchema = z.object({
   repo: z.string(),
   network: z.string(),
   ownsNetwork: z.boolean(), // false when it joins another site's network
+  // Projects that must be running for this one to work: the owner of the
+  // network it joins (doca → main). Inferred from `network:`, nothing else.
+  needs: z.array(z.string()),
   services: z.array(serviceSchema),
   attachments: z.array(attachmentSchema),
   database: projectDatabaseSchema.nullable(),

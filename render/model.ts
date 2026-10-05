@@ -45,6 +45,12 @@ export function fullHostname(label: string, domain: string): string {
 // The staging twin of a label. Always ONE label deep ("api" → "api-stg", never
 // "api.stg"), so Cloudflare's free certificate, which covers *.<domain> but not
 // *.*.<domain>, still applies.
+// The variable holding a service's image tag in its project's tags file:
+// backend → TAG_BACKEND, doca-api → TAG_DOCA_API.
+export function tagVariableFor(serviceKey: string): string {
+  return `TAG_${serviceKey.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`
+}
+
 export function stagingLabel(label: string): string {
   return label === '@' ? 'stg' : `${label}-stg`
 }
@@ -199,6 +205,11 @@ export function buildModel(registry: Registry): Model {
           siteServiceKeys: Object.keys(site.services!),
         }))
 
+        const tagVariables = services.map(service => service.tagVariable)
+        const repeatedTagVariable = tagVariables.find((tagVariable, index) => tagVariables.indexOf(tagVariable) !== index)
+        if (repeatedTagVariable)
+          fail(location, `two services share the image tag variable ${repeatedTagVariable}; rename one so their keys differ in more than - or _`)
+
         const cronNames = (site.cron ?? []).map(cronConfig => cronConfig.name)
         const repeatedCronName = cronNames.find((cronName, index) => cronNames.indexOf(cronName) !== index)
         if (repeatedCronName)
@@ -227,6 +238,7 @@ export function buildModel(registry: Registry): Model {
           repo: site.repo!,
           network,
           ownsNetwork: !site.network,
+          needs: site.network ? [network] : [],
           services,
           attachments,
           database,
@@ -353,6 +365,7 @@ function buildService(input: BuildServiceInput): Service {
     key: serviceKey,
     container: `${input.projectId}-${serviceKey}`,
     image: `${registry.registry}/${input.appName}-${input.siteName}-${serviceKey}`,
+    tagVariable: tagVariableFor(serviceKey),
     port: serviceConfig.port,
     mem: serviceConfig.mem,
     command: serviceConfig.command ? serviceConfig.command.replace(/\s+/g, ' ').trim() : null,

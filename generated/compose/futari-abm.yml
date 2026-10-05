@@ -2,7 +2,7 @@
 name: futari-abm
 services:
   backend:
-    image: ghcr.io/thedumebi/futari-abm-backend:${TAG:?not deployed yet; run nagaya deploy futari-abm <tag>}
+    image: ghcr.io/thedumebi/futari-abm-backend:${TAG_BACKEND:?not deployed yet; run nagaya deploy futari-abm <tag>}
     container_name: futari-abm-backend
     restart: unless-stopped
     command:
@@ -24,7 +24,7 @@ services:
           - backend
           - abm-backend
   frontend:
-    image: ghcr.io/thedumebi/futari-abm-frontend:${TAG:?not deployed yet; run nagaya deploy futari-abm <tag>}
+    image: ghcr.io/thedumebi/futari-abm-frontend:${TAG_FRONTEND:?not deployed yet; run nagaya deploy futari-abm <tag>}
     container_name: futari-abm-frontend
     restart: unless-stopped
     depends_on:

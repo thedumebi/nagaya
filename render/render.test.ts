@@ -200,3 +200,21 @@ test('no project container joins a shared network; Caddy joins each routed proje
   for (const [key, containers] of owners)
     assert.equal(containers.size, 1, `${key} is claimed by ${[...containers].join(', ')}`)
 })
+
+test('each service has its own image tag variable, so services deploy separately', () => {
+  const model = loadModel(SITES_YAML)
+  const doca = model.projects.find(project => project.id === 'ofuma-doca')!
+  assert.deepEqual(doca.services.map(service => service.tagVariable), ['TAG_DOCA_API', 'TAG_DOCA_WEB'])
+  const compose = renderAll(model, CLOUDFLARE_RANGES).get('generated/compose/futari-dmb.yml')!
+  assert.match(compose, /futari-dmb-backend:\$\{TAG_BACKEND:\?/)
+  assert.match(compose, /futari-dmb-frontend:\$\{TAG_FRONTEND:\?/)
+})
+
+test('a site that joins another site\'s network needs it; others need nothing', () => {
+  const model = loadModel(SITES_YAML)
+  const needsOf = (id: string) => model.projects.find(project => project.id === id)!.needs
+  assert.deepEqual(needsOf('ofuma-doca'), ['ofuma-main'])
+  assert.deepEqual(needsOf('ofuma-doca-stg'), ['ofuma-main-stg'])
+  assert.deepEqual(needsOf('ofuma-main-stg'), [])
+  assert.deepEqual(needsOf('futari-dmb'), [])
+})

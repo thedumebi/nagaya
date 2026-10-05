@@ -4,10 +4,10 @@
 # (written by `pnpm render` from sites.yaml) and makes Docker match it.
 #
 #   nagaya apply                     reconcile everything with sites.yaml
-#   nagaya prepare <project> <tag>   pull images, create the role + database; start nothing
-#   nagaya deploy  <project> <tag>   prepare, start, health-check; roll back on failure
-#   nagaya rollback <project>        redeploy the previous tag
-#   nagaya stg up|down <app>         start / stop every staging project of an app
+#   nagaya prepare <project> <tag> [--only <services>]   pull images, create the role + database; start nothing
+#   nagaya deploy  <project> <tag> [--only <services>]   prepare, start, health-check; roll back on failure
+#   nagaya rollback <project>        go back to the versions before the last deploy
+#   nagaya stg up|down <app> [site]  start / stop an app's staging, or one site (and what it needs)
 #   nagaya restore <db> <file|latest> [--replace]
 #   nagaya backup                    dump every database to R2 (cron runs this nightly)
 #   nagaya drill <db>                restore the newest backup into a scratch DB and compare
@@ -84,15 +84,71 @@ project_field() { jq -r --arg id "$1" ".projects[] | select(.id == \$id) | $2" "
 
 compose_core() { docker compose -f "$ROOT/generated/compose/core.yml" "$@"; }
 
-# docker compose for one project, with its deployed image tag.
+# docker compose for one project, with its deployed image tags.
 compose_project() {
   local project_id="$1"; shift
   local tag_file="$TAGS_DIR/$project_id.env"
   [[ -f "$tag_file" ]] || die "$project_id has never been deployed (no $tag_file)"
+  normalize_tags "$project_id"
   docker compose --env-file "$tag_file" -f "$ROOT/$(project_field "$project_id" .compose)" "$@"
 }
 
-current_tag() { [[ -f "$TAGS_DIR/$1.env" ]] && sed -n 's/^TAG=//p' "$TAGS_DIR/$1.env"; }
+# ───────────────────────────── image tags ─────────────────────────────
+
+# state/tags/<project>.env holds one line per service, TAG_<SERVICE>=<sha>
+# (TAG_BACKEND, TAG_DOCA_API…), so services deploy separately: a frontend-only
+# deploy changes TAG_FRONTEND and compose leaves the backend's container alone.
+# <project>.prev.env is the whole set before the last deploy (for rollback),
+# <project>.next.env the set being prepared.
+
+is_deployed() { [[ -f "$TAGS_DIR/$1.env" ]]; }
+
+# Files written before per-service tags hold a single TAG=<sha>: rewrite them
+# as every service at that sha. Idempotent.
+normalize_tags() { # <project>
+  local project_id="$1" tag_file legacy_tag variable
+  for tag_file in "$TAGS_DIR/$project_id.env" "$TAGS_DIR/$project_id.prev.env"; do
+    [[ -f "$tag_file" ]] || continue
+    legacy_tag="$(sed -n 's/^TAG=//p' "$tag_file")"
+    [[ -n "$legacy_tag" ]] || continue
+    : > "$tag_file.tmp"
+    for variable in $(project_field "$project_id" '.services[].tagVariable'); do
+      printf '%s=%s\n' "$variable" "$legacy_tag" >> "$tag_file.tmp"
+    done
+    mv "$tag_file.tmp" "$tag_file"
+  done
+}
+
+# The tag one service has in a tags file (empty if none).
+service_tag() { # <tags file> <project> <service key>
+  local variable
+  variable="$(project_field "$2" ".services[] | select(.key == \"$3\") | .tagVariable")"
+  if [[ -f "$1" && -n "$variable" ]]; then sed -n "s/^$variable=//p" "$1"; fi
+}
+
+# "backend 447cf59 · frontend 9a1c2d3", or "447cf59" when all agree.
+describe_tags() { # <project>
+  local project_id="$1" key tag described="" distinct
+  for key in $(project_field "$project_id" '.services[].key'); do
+    tag="$(service_tag "$TAGS_DIR/$project_id.env" "$project_id" "$key")"
+    described+="$key ${tag:0:7} · "
+  done
+  distinct="$(sed -n 's/^TAG_[A-Z0-9_]*=//p' "$TAGS_DIR/$project_id.env" | sort -u | wc -l)"
+  if (( distinct == 1 )); then sed -n 's/^TAG_[A-Z0-9_]*=//p' "$TAGS_DIR/$project_id.env" | head -1 | cut -c1-12
+  else printf '%s\n' "${described% · }"; fi
+}
+
+# The comma list given to --only, checked against the project's services.
+# Empty means every service.
+parse_only() { # <project> <comma list>
+  local project_id="$1" list="$2" key
+  [[ -n "$list" ]] || return 0
+  for key in ${list//,/ }; do
+    [[ -n "$(project_field "$project_id" ".services[] | select(.key == \"$key\") | .key")" ]] \
+      || die "$project_id has no service \"$key\" (it has: $(project_field "$project_id" '[.services[].key] | join(", ")'))"
+  done
+  printf '%s\n' "${list//,/ }"
+}
 
 is_valid_tag() { [[ "$1" =~ ^[0-9a-f]{7,40}$|^v[0-9][0-9A-Za-z.-]*$ ]]; }
 
@@ -180,8 +236,8 @@ credentials_service() { # <project> <jq condition>
 # Create the role (or reset its password to what the app's env says) and the
 # database owned by it. Values travel base64-encoded, so no quoting can break
 # the SQL, and never on a command line, so they never show up in `ps`.
-ensure_database() { # <project> <tag>
-  local project_id="$1" tag="$2"
+ensure_database() { # <project> <tags file>
+  local project_id="$1" tags_file="$2"
   local database postgres_container
   database="$(project_field "$project_id" '.database.name // empty')"
   [[ -n "$database" ]] || return 0
@@ -191,7 +247,8 @@ ensure_database() { # <project> <tag>
   service_json="$(credentials_service "$project_id" '.credentials and .dotenvx')"
   [[ -n "$service_json" ]] || die "$project_id has a database but no service with credentials"
   local image env_path key_file user_key password_key database_key
-  image="$(jq -r .image <<<"$service_json"):$tag"
+  # The credentials come from the env file baked into this service's own image.
+  image="$(jq -r .image <<<"$service_json"):$(service_tag "$tags_file" "$project_id" "$(jq -r .key <<<"$service_json")")"
   env_path="$(jq -r .dotenvx.path <<<"$service_json")"
   key_file="$(jq -r .dotenvx.keyFile <<<"$service_json")"
   user_key="$(jq -r .credentials.pgUser <<<"$service_json")"
@@ -236,8 +293,8 @@ SQL
 }
 
 # The app's Redis password must be the one the Redis server was started with.
-check_redis_password() { # <project> <tag>
-  local project_id="$1" tag="$2" password_env
+check_redis_password() { # <project> <tags file>
+  local project_id="$1" tags_file="$2" password_env
   password_env="$(project_field "$project_id" '.redis.passwordEnv // empty')"
   [[ -n "$password_env" ]] || return 0
   local service_json
@@ -245,7 +302,7 @@ check_redis_password() { # <project> <tag>
   [[ -n "$service_json" ]] || return 0
   local redis_key app_password
   redis_key="$(jq -r .credentials.redisPassword <<<"$service_json")"
-  app_password="$(read_image_env "$(jq -r .image <<<"$service_json"):$tag" \
+  app_password="$(read_image_env "$(jq -r .image <<<"$service_json"):$(service_tag "$tags_file" "$project_id" "$(jq -r .key <<<"$service_json")")" \
     "$(jq -r .dotenvx.path <<<"$service_json")" "$(jq -r .dotenvx.keyFile <<<"$service_json")" "$redis_key")"
   [[ "$app_password" == "${!password_env:-}" ]] \
     || die "$project_id: $redis_key in the app env does not match $password_env in nagaya's .env.production"
@@ -253,10 +310,12 @@ check_redis_password() { # <project> <tag>
 
 # ───────────────────────────── health ─────────────────────────────
 
-wait_healthy() { # <project>
-  local project_id="$1" any_failed=0
-  while IFS=$'\t' read -r container port health_path; do
+wait_healthy() { # <project> [service…]  (no services: all of them)
+  local project_id="$1" any_failed=0; shift
+  local only=" $* "
+  while IFS=$'\t' read -r key container port health_path; do
     [[ -n "$container" ]] || continue
+    [[ "$only" == "  " || "$only" == *" $key "* ]] || continue
     local attempt
     for attempt in $(seq 1 45); do
       if docker exec "$container" wget -q -O /dev/null "http://127.0.0.1:$port$health_path" 2>/dev/null; then
@@ -266,7 +325,7 @@ wait_healthy() { # <project>
       sleep 2
     done
     warn "$container never answered $health_path"; any_failed=1
-  done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .services[] | select(.health) | [.container, (.port|tostring), .health] | @tsv' "$PLAN_FILE")
+  done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .services[] | select(.health) | [.key, .container, (.port|tostring), .health] | @tsv' "$PLAN_FILE")
 
   # End to end through Caddy, on the box: proves routing and the origin cert.
   # (From the laptop this cannot work: the firewall only admits Cloudflare.)
@@ -287,7 +346,8 @@ wait_healthy() { # <project>
 # image names, so the keep-list spans every project, not just this one.
 prune_images() {
   local kept_tags image_repos image_repo
-  kept_tags="$(cat "$TAGS_DIR"/*.env 2>/dev/null | sed -n 's/^TAG=//p' | sort -u | paste -sd'|' -)"
+  # Every tag in any tags file (current, previous, being prepared), per service.
+  kept_tags="$(cat "$TAGS_DIR"/*.env 2>/dev/null | sed -n 's/^TAG[A-Z0-9_]*=//p' | sort -u | paste -sd'|' -)"
   [[ -n "$kept_tags" ]] || return 0
   image_repos="$(plan '[.projects[].services[].image] | unique | .[]')"
   for image_repo in $image_repos; do
@@ -308,56 +368,93 @@ dump_logs() { # <project>
 
 # ───────────────────────────── deploying ─────────────────────────────
 
-cmd_prepare() { # <project> <tag>
-  local project_id="$1" tag="$2"
+# Write <project>.next.env: <tag> for the given services (every service when
+# none are given); the others keep the tag they are deployed at.
+write_next_tags() { # <project> <tag> [service…]
+  local project_id="$1" tag="$2"; shift 2
+  local next_file="$TAGS_DIR/$project_id.next.env" key variable value
+  : > "$next_file.tmp"
+  for key in $(project_field "$project_id" '.services[].key'); do
+    variable="$(project_field "$project_id" ".services[] | select(.key == \"$key\") | .tagVariable")"
+    if (( $# == 0 )) || [[ " $* " == *" $key "* ]]; then
+      value="$tag"
+    else
+      value="$(service_tag "$TAGS_DIR/$project_id.env" "$project_id" "$key")"
+      [[ -n "$value" ]] || { rm -f "$next_file.tmp"; die "$project_id: $key has never been deployed, so it cannot be left out; deploy without --only once first"; }
+    fi
+    printf '%s=%s\n' "$variable" "$value" >> "$next_file.tmp"
+  done
+  mv "$next_file.tmp" "$next_file"
+}
+
+cmd_prepare() { # <project> <tag> [service…]
+  local project_id="$1" tag="$2"; shift 2
   project_exists "$project_id" || die "unknown project $project_id (see generated/plan.json)"
   is_valid_tag "$tag" || die "tag must be a git SHA or vX.Y.Z, got \"$tag\""
   ensure_network edge
   attach_resources "$project_id"
   split_keys "$project_id"
   mkdir -p "$TAGS_DIR"
-  printf 'TAG=%s\n' "$tag" > "$TAGS_DIR/$project_id.next.env"
-  docker compose --env-file "$TAGS_DIR/$project_id.next.env" -f "$ROOT/$(project_field "$project_id" .compose)" pull --quiet \
+  normalize_tags "$project_id"
+  write_next_tags "$project_id" "$tag" "$@"
+  local next_file="$TAGS_DIR/$project_id.next.env"
+  # Pull only what changes: the named services, or all of them.
+  docker compose --env-file "$next_file" -f "$ROOT/$(project_field "$project_id" .compose)" pull --quiet "$@" \
     || die "pull failed for $project_id:$tag. Did CI push it, and has this box run \`nagaya login\`?"
-  ensure_database "$project_id" "$tag"
-  check_redis_password "$project_id" "$tag"
+  ensure_database "$project_id" "$next_file"
+  check_redis_password "$project_id" "$next_file"
 }
 
-cmd_deploy() { # <project> <tag>
-  local project_id="$1" tag="$2"
-  cmd_prepare "$project_id" "$tag"
-  local previous_tag; previous_tag="$(current_tag "$project_id" || true)"
-  [[ -n "$previous_tag" && "$previous_tag" != "$tag" ]] && printf 'TAG=%s\n' "$previous_tag" > "$TAGS_DIR/$project_id.prev.env"
-  mv "$TAGS_DIR/$project_id.next.env" "$TAGS_DIR/$project_id.env"
+cmd_deploy() { # <project> <tag> [service…]
+  local project_id="$1" tag="$2"; shift 2
+  local what="${*:-every service}"
+  [[ "$(project_field "$project_id" .variant)" == stg ]] && start_needed_staging "$project_id"
+  cmd_prepare "$project_id" "$tag" "$@"
 
-  info "starting $project_id at $tag"
+  local current_file="$TAGS_DIR/$project_id.env" previous_file="$TAGS_DIR/$project_id.prev.env" has_previous=0
+  if [[ -f "$current_file" ]] && ! cmp -s "$current_file" "$TAGS_DIR/$project_id.next.env"; then
+    cp "$current_file" "$previous_file"; has_previous=1
+  fi
+  mv "$TAGS_DIR/$project_id.next.env" "$current_file"
+
+  # compose recreates only the containers whose image tag changed.
+  info "starting $project_id: $what at ${tag:0:12}"
   compose_project "$project_id" up -d --remove-orphans
   if [[ "$(project_field "$project_id" .variant)" == stg ]]; then
     mkdir -p "$STAGING_STATE_DIR"; echo up > "$STAGING_STATE_DIR/$project_id"
   fi
 
-  if wait_healthy "$project_id"; then
+  if wait_healthy "$project_id" "$@"; then
     prune_images
-    ok "$project_id is live at $tag"
+    ok "$project_id is live: $(describe_tags "$project_id")"
     return 0
   fi
 
   dump_logs "$project_id"
-  if [[ -n "$previous_tag" && "$previous_tag" != "$tag" ]]; then
-    warn "rolling $project_id back to $previous_tag"
-    printf 'TAG=%s\n' "$previous_tag" > "$TAGS_DIR/$project_id.env"
+  if (( has_previous )); then
+    cp "$previous_file" "$current_file"
+    warn "rolling $project_id back to: $(describe_tags "$project_id")"
     compose_project "$project_id" up -d --remove-orphans
     wait_healthy "$project_id" || warn "the rollback is unhealthy too — look at the logs above"
   fi
-  die "deploy of $project_id at $tag failed"
+  die "deploy of $project_id ($what at $tag) failed"
 }
 
+# Back to the whole set of versions from before the last deploy. Run twice, it
+# swaps back.
 cmd_rollback() { # <project>
   local project_id="$1"
-  [[ -f "$TAGS_DIR/$project_id.prev.env" ]] || die "$project_id has no previous tag recorded"
-  local previous_tag; previous_tag="$(sed -n 's/^TAG=//p' "$TAGS_DIR/$project_id.prev.env")"
-  info "rolling $project_id back to $previous_tag"
-  cmd_deploy "$project_id" "$previous_tag"
+  project_exists "$project_id" || die "unknown project $project_id"
+  normalize_tags "$project_id"
+  local current_file="$TAGS_DIR/$project_id.env" previous_file="$TAGS_DIR/$project_id.prev.env"
+  [[ -f "$previous_file" ]] || die "$project_id has no previous versions recorded"
+  cp "$current_file" "$current_file.tmp"
+  cp "$previous_file" "$current_file"
+  mv "$current_file.tmp" "$previous_file"
+  info "rolling $project_id back to: $(describe_tags "$project_id")"
+  compose_project "$project_id" up -d --remove-orphans
+  wait_healthy "$project_id" || die "$project_id is unhealthy after the rollback; \`nagaya rollback $project_id\` again returns to where it was"
+  ok "$project_id rolled back: $(describe_tags "$project_id")"
 }
 
 # ───────────────────────────── reconciling ─────────────────────────────
@@ -395,10 +492,8 @@ cmd_apply() {
   docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
   ok "caddy reloaded"
 
-  local tag
   for project_id in $(plan '.projects[].id'); do
-    tag="$(current_tag "$project_id" || true)"
-    if [[ -z "$tag" ]]; then
+    if ! is_deployed "$project_id"; then
       info "$project_id: not deployed yet (first deploy comes from its repo's CI)"
       continue
     fi
@@ -409,7 +504,8 @@ cmd_apply() {
       continue
     fi
     split_keys "$project_id"
-    ensure_database "$project_id" "$tag"
+    normalize_tags "$project_id"
+    ensure_database "$project_id" "$TAGS_DIR/$project_id.env"
     compose_project "$project_id" up -d --remove-orphans
   done
 
@@ -428,32 +524,83 @@ cmd_apply() {
   ok "apply finished"
 }
 
-cmd_stg() { # up|down <app>
-  local action="$1" app="$2" staging_projects
+# ───────────────────────────── staging ─────────────────────────────
+
+# A site that joins another site's network needs that site running: doca
+# calls main's backend over main's network. plan.json carries it as "needs",
+# inferred from `network:` in sites.yaml. Sites without one stand alone.
+
+stg_dependents() { plan --arg id "$1" '.projects[] | select(.needs | index($id)) | .id'; }
+
+stg_running() {
+  [[ "$(staging_state "$1")" == up ]] && container_running "$(project_field "$1" '.services[0].container')"
+}
+
+stg_up_project() { # <project>
+  local project_id="$1"
+  is_deployed "$project_id" || die "$project_id has never been deployed. Push to its staging branch first."
+  mkdir -p "$STAGING_STATE_DIR"; echo up > "$STAGING_STATE_DIR/$project_id"
+  attach_resources "$project_id"
+  split_keys "$project_id"
+  normalize_tags "$project_id"
+  ensure_database "$project_id" "$TAGS_DIR/$project_id.env"
+  compose_project "$project_id" up -d
+  wait_healthy "$project_id" || warn "$project_id is up but unhealthy"
+}
+
+stg_down_project() { # <project>
+  local project_id="$1"
+  mkdir -p "$STAGING_STATE_DIR"; echo down > "$STAGING_STATE_DIR/$project_id"
+  is_deployed "$project_id" && compose_project "$project_id" stop
+  ok "$project_id stopped"
+}
+
+# Start, first, every staging project this one needs that is not running.
+start_needed_staging() { # <project>
+  local project_id="$1" needed
+  for needed in $(project_field "$project_id" '.needs[]'); do
+    stg_running "$needed" && continue
+    info "$needed is down; starting it first ($project_id needs it)"
+    start_needed_staging "$needed"
+    stg_up_project "$needed"
+  done
+}
+
+# Stop, first, every staging project that needs this one.
+stop_with_dependents() { # <project>
+  local project_id="$1" dependent
+  for dependent in $(stg_dependents "$project_id"); do
+    stg_running "$dependent" && info "$dependent needs $project_id: stopping it too"
+    stop_with_dependents "$dependent"
+  done
+  stg_down_project "$project_id"
+}
+
+cmd_stg() { # up|down <app> [site]
+  local action="$1" app="$2" site="${3:-}"
+  [[ "$action" == up || "$action" == down ]] || die "usage: nagaya stg up|down <app> [site]"
+  local staging_projects
   staging_projects="$(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg") | .id')"
   [[ -n "$staging_projects" ]] || die "app $app has no staging projects"
-  mkdir -p "$STAGING_STATE_DIR"
+
+  if [[ -n "$site" ]]; then
+    local target
+    target="$(plan --arg app "$app" --arg site "$site" '.projects[] | select(.app == $app and .site == $site and .variant == "stg") | .id')"
+    [[ -n "$target" ]] || die "app $app has no staging site \"$site\" (it has: $(plan --arg app "$app" '[.projects[] | select(.app == $app and .variant == "stg") | .site] | join(", ")'))"
+    if [[ "$action" == up ]]; then start_needed_staging "$target"; stg_up_project "$target"
+    else stop_with_dependents "$target"; fi
+    return
+  fi
+
+  # The whole app: sites that others need start first and stop last.
   local project_id
-  for project_id in $staging_projects; do
-    case "$action" in
-      up)
-        local tag; tag="$(current_tag "$project_id" || true)"
-        [[ -n "$tag" ]] || die "$project_id has never been deployed. Push to its staging branch first."
-        echo up > "$STAGING_STATE_DIR/$project_id"
-        attach_resources "$project_id"
-        split_keys "$project_id"
-        ensure_database "$project_id" "$tag"
-        compose_project "$project_id" up -d
-        wait_healthy "$project_id" || warn "$project_id is up but unhealthy"
-        ;;
-      down)
-        echo down > "$STAGING_STATE_DIR/$project_id"
-        [[ -f "$TAGS_DIR/$project_id.env" ]] && compose_project "$project_id" stop
-        ok "$project_id stopped"
-        ;;
-      *) die "usage: nagaya stg up|down <app>" ;;
-    esac
-  done
+  if [[ "$action" == up ]]; then
+    for project_id in $(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg" and (.needs | length) == 0) | .id'); do stg_up_project "$project_id"; done
+    for project_id in $(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg" and (.needs | length) > 0) | .id'); do stg_up_project "$project_id"; done
+  else
+    for project_id in $(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg" and (.needs | length) > 0) | .id'); do stg_down_project "$project_id"; done
+    for project_id in $(plan --arg app "$app" '.projects[] | select(.app == $app and .variant == "stg" and (.needs | length) == 0) | .id'); do stg_down_project "$project_id"; done
+  fi
 }
 
 # ───────────────────────────── backups ─────────────────────────────
@@ -810,15 +957,15 @@ check_cloudflare_ranges() {
 # ───────────────────────────── status ─────────────────────────────
 
 cmd_status() {
-  printf '%-22s %-6s %-12s %s\n' PROJECT KIND TAG STATE
+  printf '%-22s %-6s %-36s %s\n' PROJECT KIND VERSION STATE
   local project_id
   for project_id in $(plan '.projects[].id'); do
     local tag running_state variant
-    tag="$(current_tag "$project_id" || echo '-')"
+    if is_deployed "$project_id"; then normalize_tags "$project_id"; tag="$(describe_tags "$project_id")"; else tag=-; fi
     variant="$(project_field "$project_id" .variant)"
     if container_running "$(project_field "$project_id" '.services[0].container')"; then running_state=running; else running_state=stopped; fi
     [[ "$variant" == stg ]] && running_state="$running_state (stg: $(staging_state "$project_id"))"
-    printf '%-22s %-6s %-12s %s\n' "$project_id" "$variant" "${tag:0:12}" "$running_state"
+    printf '%-22s %-6s %-36s %s\n' "$project_id" "$variant" "$tag" "$running_state"
   done
   echo
   docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}'
@@ -835,12 +982,15 @@ cmd_ssh_dispatch() {
   # The CI key can do exactly two things, whatever it asks for.
   local requested="${SSH_ORIGINAL_COMMAND:-}"
   requested="${requested#nagaya }"
-  if [[ "$requested" =~ ^deploy\ ([a-z0-9-]+)\ ([0-9a-f]{7,40})$ ]]; then
+  if [[ "$requested" =~ ^deploy\ ([a-z0-9-]+)\ ([0-9a-f]{7,40})(\ --only\ ([a-z0-9-]+(,[a-z0-9-]+)*))?$ ]]; then
+    if [[ -n "${BASH_REMATCH[4]}" ]]; then
+      exec "$0" deploy "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" --only "${BASH_REMATCH[4]}"
+    fi
     exec "$0" deploy "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
   elif [[ "$requested" == apply ]]; then
     exec "$0" apply
   fi
-  die "refused: \"$requested\" (the CI key may only run: deploy <project> <sha> | apply)"
+  die "refused: \"$requested\" (the CI key may only run: deploy <project> <sha> [--only <services>] | apply)"
 }
 
 # ───────────────────────────── main ─────────────────────────────
@@ -857,10 +1007,19 @@ main() {
 
   case "$command" in
     apply)    take_lock; cmd_apply "$@" ;;
-    prepare)  [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_prepare "$@"; rm -f "$TAGS_DIR/$1.next.env" ;;
-    deploy)   [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_deploy "$@" ;;
+    prepare|deploy)
+      [[ $# -eq 2 || ( $# -eq 4 && "$3" == --only ) ]] || usage_for "$command"
+      local project_id="$1" tag="$2" services=()
+      project_exists "$project_id" || die "unknown project $project_id (see generated/plan.json)"
+      [[ $# -eq 4 ]] && read -r -a services <<<"$(parse_only "$project_id" "$4")"
+      take_lock
+      if [[ "$command" == prepare ]]; then
+        cmd_prepare "$project_id" "$tag" ${services[@]+"${services[@]}"}; rm -f "$TAGS_DIR/$project_id.next.env"
+      else
+        cmd_deploy "$project_id" "$tag" ${services[@]+"${services[@]}"}
+      fi ;;
     rollback) [[ $# -eq 1 ]] || usage_for "$command"; take_lock; cmd_rollback "$@" ;;
-    stg)      [[ $# -eq 2 ]] || usage_for "$command"; take_lock; cmd_stg "$@" ;;
+    stg)      [[ $# -eq 2 || $# -eq 3 ]] || usage_for "$command"; take_lock; cmd_stg "$@" ;;
     backup)   take_lock; cmd_backup ;;
     restore)  [[ $# -ge 2 ]] || usage_for "$command"; take_lock; cmd_restore "$@" ;;
     drill)    [[ $# -eq 1 ]] || usage_for "$command"; take_lock; cmd_drill "$@" ;;

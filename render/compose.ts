@@ -133,7 +133,9 @@ export function renderProject(project: Project): string {
     const serviceNetworks: Record<string, object> = { site: { aliases: service.aliases } }
 
     const composeService: Record<string, unknown> = {
-      image: `${service.image}:\${TAG:?not deployed yet; run nagaya deploy ${project.id} <tag>}`,
+      // Each service has its own tag, so a frontend-only deploy leaves the
+      // backend's container alone (compose only recreates what changed).
+      image: `${service.image}:\${${service.tagVariable}:?not deployed yet; run nagaya deploy ${project.id} <tag>}`,
       container_name: service.container,
       restart: 'unless-stopped',
     }

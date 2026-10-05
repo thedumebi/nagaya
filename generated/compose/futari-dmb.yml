@@ -2,7 +2,7 @@
 name: futari-dmb
 services:
   backend:
-    image: ghcr.io/thedumebi/futari-dmb-backend:${TAG:?not deployed yet; run nagaya deploy futari-dmb <tag>}
+    image: ghcr.io/thedumebi/futari-dmb-backend:${TAG_BACKEND:?not deployed yet; run nagaya deploy futari-dmb <tag>}
     container_name: futari-dmb-backend
     restart: unless-stopped
     command:
@@ -23,7 +23,7 @@ services:
         aliases:
           - backend
   frontend:
-    image: ghcr.io/thedumebi/futari-dmb-frontend:${TAG:?not deployed yet; run nagaya deploy futari-dmb <tag>}
+    image: ghcr.io/thedumebi/futari-dmb-frontend:${TAG_FRONTEND:?not deployed yet; run nagaya deploy futari-dmb <tag>}
     container_name: futari-dmb-frontend
     restart: unless-stopped
     depends_on:

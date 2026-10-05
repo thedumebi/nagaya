@@ -2,7 +2,7 @@
 name: ofuma-main
 services:
   backend:
-    image: ghcr.io/thedumebi/ofuma-main-backend:${TAG:?not deployed yet; run nagaya deploy ofuma-main <tag>}
+    image: ghcr.io/thedumebi/ofuma-main-backend:${TAG_BACKEND:?not deployed yet; run nagaya deploy ofuma-main <tag>}
     container_name: ofuma-main-backend
     restart: unless-stopped
     command:
@@ -21,7 +21,7 @@ services:
         aliases:
           - backend
   frontend:
-    image: ghcr.io/thedumebi/ofuma-main-frontend:${TAG:?not deployed yet; run nagaya deploy ofuma-main <tag>}
+    image: ghcr.io/thedumebi/ofuma-main-frontend:${TAG_FRONTEND:?not deployed yet; run nagaya deploy ofuma-main <tag>}
     container_name: ofuma-main-frontend
     restart: unless-stopped
     depends_on:
