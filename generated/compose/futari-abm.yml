@@ -38,11 +38,7 @@ services:
       site:
         aliases:
           - frontend
-      edge: {}
 networks:
   site:
     name: futari-abm
-    external: true
-  edge:
-    name: edge
     external: true

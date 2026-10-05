@@ -613,17 +613,15 @@ You never write these. They are fixed functions of the registry:
 ## Networking, in one picture
 
 ```
-                      edge network (Caddy + every routed container)
-   ┌──────────┐  ┌─────────────────────┬──────────────────────┬────────────────────────┐
-   │  caddy   │──│ futari-dmb-frontend │ ofuma-main-frontend  │ ofuma-main-stg-frontend│ …
-   └──────────┘  └─────────────────────┴──────────────────────┴────────────────────────┘
-
    network futari-dmb                 network ofuma-main                network ofuma-main-stg
    ├─ futari-dmb-backend  "backend"   ├─ ofuma-main-backend "backend"   ├─ ofuma-main-stg-backend "backend"
    ├─ futari-dmb-frontend "frontend"  ├─ ofuma-main-frontend           ├─ …
    ├─ pg-main  "postgres","dmb-postgres"  ├─ ofuma-doca-doca-api "doca-api"
-   └─ redis-futari "redis","dmb-redis"    ├─ pg-main      "postgres"
-                                          └─ redis-ofuma  "redis"
+   ├─ redis-futari "redis","dmb-redis"    ├─ pg-main      "postgres"
+   └─ caddy                               ├─ redis-ofuma  "redis"
+                                          └─ caddy
+
+   network edge: caddy only
 ```
 
 - **Each project network is private to that site.** That is why the hostname
@@ -633,9 +631,17 @@ You never write these. They are fixed functions of the registry:
   --alias`), outside compose. If core.yml listed every project network,
   adding a site would make compose recreate Postgres and briefly drop every
   other site's connections.
-- **Caddy only joins `edge`.** It reaches containers by their unique container
-  names (`ofuma-main-stg-frontend:8080`), so the same `frontend` alias in
-  different networks never confuses it.
+- **Caddy joins every project network that has a route**, attached by
+  `nagaya apply` like the resources, with no alias. It reaches containers by
+  their unique container names (`ofuma-main-stg-frontend:8080`), so the same
+  `frontend` or `backend` alias in different networks never confuses it.
+- **No project container joins a network shared with other projects.** On a
+  shared network, Docker gives every container its service name as a DNS
+  name, so every project's `backend` would answer to `backend` there, and one
+  site's nginx could reach another site's backend. (Until 2026-10-05 all
+  routed containers shared `edge`, and that is exactly what happened: dmb's
+  and staging's frontends resolved ofuma production's backend.) `edge` now
+  holds Caddy alone.
 - **Nothing publishes a port except Caddy (443) and Postgres (127.0.0.1:`tunnel_port`).**
   Docker-published ports bypass ufw, because their traffic is DNATed through
   FORWARD, not INPUT. So `generated/firewall.sh` also restricts Caddy's 443

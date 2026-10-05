@@ -175,3 +175,28 @@ test('each alert check gets its own crontab line, on its own schedule', () => {
 test('an alert check nagaya has no code for is an error', () => {
   assert.throws(loadEdited(sitesYaml => sitesYaml.replace('    cloudflare-ranges:\n', '    restarts:\n')), RegistryError)
 })
+
+test('no project container joins a shared network; Caddy joins each routed project network instead', () => {
+  const model = loadModel(SITES_YAML)
+  const rendered = renderAll(model, CLOUDFLARE_RANGES)
+  // On a shared network every project's `backend` answered to that one name,
+  // so dmb's nginx and staging's resolved ofuma production's backend.
+  for (const project of model.projects) {
+    const compose = rendered.get(`generated/compose/${project.id}.yml`)!
+    assert.doesNotMatch(compose, /\bedge\b/, `${project.id} must not join the edge network`)
+    const routed = project.services.some(service => service.public)
+    assert.equal(project.attachments.some(attachment => attachment.container === 'caddy'), routed, project.id)
+  }
+  // Within any one network, `backend` (or any alias) belongs to one container.
+  const owners = new Map<string, Set<string>>()
+  for (const project of model.projects) {
+    for (const service of project.services) {
+      for (const alias of service.aliases) {
+        const key = `${project.network} ${alias}`
+        owners.set(key, (owners.get(key) ?? new Set()).add(service.container))
+      }
+    }
+  }
+  for (const [key, containers] of owners)
+    assert.equal(containers.size, 1, `${key} is claimed by ${[...containers].join(', ')}`)
+})

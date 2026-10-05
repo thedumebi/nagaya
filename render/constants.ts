@@ -34,5 +34,11 @@ export const PROJECT_LABEL = 'dev.nagaya.project'
 // The compose project holding Caddy, Postgres and Redis.
 export const CORE_PROJECT = 'nagaya-core'
 
-// The Docker network Caddy shares with every container it routes to.
+// Caddy's own network in the core project. Nothing else joins it: a shared
+// network would give every project's `backend` the same DNS name there, so
+// one project's nginx could resolve another project's backend. Caddy instead
+// joins each project network that has a route (an attachment, like Postgres).
 export const EDGE_NETWORK = 'edge'
+
+// The Caddy container, attached to every project network it routes into.
+export const CADDY_CONTAINER = 'caddy'

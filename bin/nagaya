@@ -106,11 +106,12 @@ ensure_network() {
   docker network inspect "$1" >/dev/null 2>&1 || { docker network create "$1" >/dev/null; info "created network $1"; }
 }
 
-# Attach each resource container (Postgres, Redis) to a project's network
-# under the hostnames the project's code uses for it. Done outside compose on
+# Attach each core container (Postgres, Redis, and Caddy for a project with a
+# route) to a project's network, under the hostnames the project's code uses
+# for it (Caddy: none, it routes by container name). Done outside compose on
 # purpose: putting every project network into core.yml would make compose
 # recreate Postgres whenever a site is added. Idempotent, and re-run by every
-# apply, because recreating a resource container (an image bump) drops these.
+# apply, because recreating a core container (an image bump) drops these.
 attach_resources() {
   local project_id="$1" network
   network="$(project_field "$project_id" .network)"
@@ -122,7 +123,8 @@ attach_resources() {
     fi
     local connect_args=() alias
     for alias in $aliases; do connect_args+=(--alias "$alias"); done
-    docker network connect "${connect_args[@]}" "$network" "$container"
+    # ${a[@]+"${a[@]}"}: an empty array (Caddy has no aliases) under set -u.
+    docker network connect ${connect_args[@]+"${connect_args[@]}"} "$network" "$container"
     info "attached $container to $network as: $aliases"
   done < <(jq -r --arg id "$project_id" '.projects[] | select(.id == $id) | .attach[] | [.container, (.aliases | join(" "))] | @tsv' "$PLAN_FILE")
 }
@@ -438,6 +440,7 @@ cmd_stg() { # up|down <app>
         local tag; tag="$(current_tag "$project_id" || true)"
         [[ -n "$tag" ]] || die "$project_id has never been deployed. Push to its staging branch first."
         echo up > "$STAGING_STATE_DIR/$project_id"
+        attach_resources "$project_id"
         split_keys "$project_id"
         ensure_database "$project_id" "$tag"
         compose_project "$project_id" up -d

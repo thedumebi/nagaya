@@ -1405,7 +1405,7 @@ What it does, in order:
 3. Starts **core**: `caddy`, `pg-main` (Postgres 18), `redis-futari`,
    `redis-ofuma`. It waits for Postgres to answer.
 4. Attaches Postgres and Redis to each project network under the names the
-   apps use.
+   apps use, and Caddy to each project network it routes into.
 5. Validates and reloads the Caddyfile.
 6. Reports every project as "not deployed yet".
 7. Installs the crontab: backups, nihongo reminders, alerts.

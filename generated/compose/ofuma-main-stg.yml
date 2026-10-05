@@ -20,7 +20,6 @@ services:
       site:
         aliases:
           - backend
-      edge: {}
   frontend:
     image: ghcr.io/thedumebi/ofuma-main-frontend:${TAG:?not deployed yet; run nagaya deploy ofuma-main-stg <tag>}
     container_name: ofuma-main-stg-frontend
@@ -36,11 +35,7 @@ services:
       site:
         aliases:
           - frontend
-      edge: {}
 networks:
   site:
     name: ofuma-main-stg
-    external: true
-  edge:
-    name: edge
     external: true

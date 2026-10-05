@@ -20,7 +20,6 @@ services:
       site:
         aliases:
           - doca-api
-      edge: {}
   doca-web:
     image: ghcr.io/thedumebi/ofuma-doca-doca-web:${TAG:?not deployed yet; run nagaya deploy ofuma-doca <tag>}
     container_name: ofuma-doca-doca-web
@@ -36,11 +35,7 @@ services:
       site:
         aliases:
           - doca-web
-      edge: {}
 networks:
   site:
     name: ofuma-main
-    external: true
-  edge:
-    name: edge
     external: true

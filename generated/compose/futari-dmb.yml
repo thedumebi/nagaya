@@ -37,11 +37,7 @@ services:
       site:
         aliases:
           - frontend
-      edge: {}
 networks:
   site:
     name: futari-dmb
-    external: true
-  edge:
-    name: edge
     external: true

@@ -8,6 +8,9 @@
 // compose (they are `external: true` here). Resources are attached to each
 // project network with `docker network connect --alias`, outside compose, so
 // adding a site never makes compose recreate Postgres for every other tenant.
+// Caddy is attached the same way to every project network it routes into;
+// project containers never join a network shared with other projects, where
+// every project's `backend` would answer to the same name.
 
 import { stringify } from 'yaml'
 import { CORE_PROJECT, EDGE_NETWORK, PROJECT_LABEL, ROOT } from './constants.ts'
@@ -128,8 +131,6 @@ export function renderProject(project: Project): string {
 
   for (const service of project.services) {
     const serviceNetworks: Record<string, object> = { site: { aliases: service.aliases } }
-    if (service.public)
-      serviceNetworks[EDGE_NETWORK] = {}
 
     const composeService: Record<string, unknown> = {
       image: `${service.image}:\${TAG:?not deployed yet; run nagaya deploy ${project.id} <tag>}`,
@@ -161,8 +162,6 @@ export function renderProject(project: Project): string {
   }
 
   const projectNetworks: Record<string, object> = { site: { name: project.network, external: true } }
-  if (project.services.some(service => service.public))
-    projectNetworks[EDGE_NETWORK] = { name: EDGE_NETWORK, external: true }
 
   return HEADER('#') + toYaml({ name: project.id, services, networks: projectNetworks })
 }

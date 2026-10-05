@@ -93,7 +93,7 @@ How the pieces work today:
  ┌──────────────────────── netcup VPS 500 G12 "nagaya" (NUE) ────────────────────────┐
  │  2 vCPU / 4 GB / 128 GB NVMe · Ubuntu 24.04 Minimal · Docker                       │
  │                                                                                    │
- │   caddy ──(edge network)──▶ futari-{dmb,abm,nihongo}-frontend   /srv/static/futari │
+ │   caddy ──(each site's net)─▶ futari-{dmb,abm,nihongo}-frontend /srv/static/futari │
  │     │                       ofuma-main-frontend · backend (api.)                   │
  │     │                       ofuma-doca-doca-web · doca-api (api-doca.)             │
  │     │                       ofuma-*-stg-*  (off by default → "Staging is off")     │

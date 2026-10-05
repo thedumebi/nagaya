@@ -39,6 +39,10 @@
             "redis",
             "dmb-redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -104,6 +108,10 @@
             "redis",
             "dmb-redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -169,6 +177,10 @@
             "redis",
             "dmb-redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -232,6 +244,10 @@
           "aliases": [
             "redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -295,6 +311,10 @@
           "aliases": [
             "redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -358,6 +378,10 @@
           "aliases": [
             "redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {
@@ -421,6 +445,10 @@
           "aliases": [
             "redis"
           ]
+        },
+        {
+          "container": "caddy",
+          "aliases": []
         }
       ],
       "database": {

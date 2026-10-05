@@ -3,7 +3,7 @@
 // the model and nothing else, so each naming rule lives in exactly one place:
 // here. Types are in types/, fixed values in constants.ts.
 
-import { CREDENTIAL_KEYS, NAMECHEAP_MX, NAMECHEAP_SPF, ROOT } from './constants.ts'
+import { CADDY_CONTAINER, CREDENTIAL_KEYS, NAMECHEAP_MX, NAMECHEAP_SPF, ROOT } from './constants.ts'
 import { RegistryError } from './errors.ts'
 import type {
   Attachment,
@@ -175,10 +175,14 @@ export function buildModel(registry: Registry): Model {
           redis = { resource: redisRef.use, passwordEnv: redisConfig.password_env ?? null }
         }
 
-        // A service Caddy routes to is "public": it joins the edge network.
+        // A service Caddy routes to is "public". Caddy reaches it by joining
+        // this project's network (by container name, no alias), never by the
+        // service joining a network shared with other projects.
         const routedServiceKeys = new Set(
           Object.values(site.routes).filter(target => target !== 'static').map(target => target.split(':')[0]),
         )
+        if (routedServiceKeys.size)
+          attachments.push({ container: CADDY_CONTAINER, aliases: [] })
 
         const services: Service[] = Object.entries(site.services).map(([serviceKey, serviceConfig]) => buildService({
           registry,
