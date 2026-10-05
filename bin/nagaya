@@ -351,9 +351,17 @@ wait_healthy() { # <project> [service…]  (no services: all of them)
 # runs or could roll back to (tags/*.env and *.prev.env). Prod and stg share
 # image names, so the keep-list spans every project, not just this one.
 prune_images() {
-  local kept_tags image_repos image_repo
-  # Every tag in any tags file (current, previous, being prepared), per service.
-  kept_tags="$(cat "$TAGS_DIR"/*.env 2>/dev/null | sed -n 's/^TAG[A-Z0-9_]*=//p' | sort -u | paste -sd'|' -)"
+  local kept_tags image_repos image_repo tag_file
+  # Only what each project is deployed at now. Previous versions are not kept:
+  # the box stays lean, and `nagaya rollback` (or compose) pulls them again
+  # from GHCR when needed. A failed deploy's automatic rollback needs nothing
+  # extra, because the version it returns to is the one still running.
+  local current_files=()
+  for tag_file in "$TAGS_DIR"/*.env; do
+    [[ "$tag_file" == *.prev.env || "$tag_file" == *.next.env ]] || current_files+=("$tag_file")
+  done
+  (( ${#current_files[@]} )) || return 0
+  kept_tags="$(cat "${current_files[@]}" | sed -n 's/^TAG[A-Z0-9_]*=//p' | sort -u | paste -sd'|' -)"
   [[ -n "$kept_tags" ]] || return 0
   image_repos="$(plan '[.projects[].services[].image] | unique | .[]')"
   for image_repo in $image_repos; do
@@ -362,6 +370,8 @@ prune_images() {
       | xargs -r docker rmi >/dev/null 2>&1 || true
   done
   docker image prune -f >/dev/null
+  # Nothing is ever built on this box; clear any build cache all the same.
+  docker builder prune -af >/dev/null 2>&1 || true
 }
 
 dump_logs() { # <project>
@@ -458,6 +468,8 @@ cmd_rollback() { # <project>
   cp "$previous_file" "$current_file"
   mv "$current_file.tmp" "$previous_file"
   info "rolling $project_id back to: $(describe_tags "$project_id")"
+  # Previous images are not kept on the box: pull them back first.
+  compose_project "$project_id" pull --quiet
   compose_project "$project_id" up -d --remove-orphans
   wait_healthy "$project_id" || die "$project_id is unhealthy after the rollback; \`nagaya rollback $project_id\` again returns to where it was"
   ok "$project_id rolled back: $(describe_tags "$project_id")"
@@ -541,6 +553,8 @@ cmd_apply() {
 
   crontab "$ROOT/generated/crontab"
   ok "crontab installed"
+  prune_images
+  ok "images: only what each project runs now are kept"
   ok "apply finished"
 }
 

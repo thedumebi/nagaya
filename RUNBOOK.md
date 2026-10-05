@@ -2064,6 +2064,9 @@ nagaya rollback <project>          # back to every service's version before the 
 Each service has its own version (`nagaya status` shows them, e.g.
 `backend 447cf59 · frontend 9a1c2d3`), so a rollback after a frontend-only
 deploy returns only the frontend; running it again swaps back.
+Old images are not kept on the box (only what each project runs now), so a
+rollback first pulls the previous version back from GHCR: a few seconds, and
+it needs GHCR to be reachable.
 Or push a revert to the repo, which is the better record. A rollback does not
 undo migrations: Drizzle migrations only go forward. Write the next migration
 to be compatible with the previous code if you think you might need one.
