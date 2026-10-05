@@ -210,8 +210,6 @@ apps:
       - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
       # Old staging names, kept so nothing breaks at the nameserver switch.
       # Delete in RUNBOOK.md Phase 9 together with the Hetzner staging box.
-      - { type: A, name: doca.stg,     content: 46.225.127.236 }
-      - { type: A, name: api-doca.stg, content: 46.225.127.236 }
       - { type: A, name: piston.stg,   content: 46.225.127.236 }   # PM-Interview-Bank calls this
 
     sites:
