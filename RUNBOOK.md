@@ -2003,7 +2003,7 @@ docker run --rm --env-file .env -v ~/piston/caddy:/etc/caddy:ro caddy:2-alpine \
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | tail -1   # "Valid configuration"
 ```
 
-**9.3.3** 🖥️ — **the switch. Piston is down for ~10–30 s.** Do it at a quiet
+**9.3.3** 🖥️ *(done 2026-10-10)* — **the switch. Piston is down for ~10–30 s.** Do it at a quiet
 moment, with PM-Interview-Bank open to test straight after.
 ```bash
 docker stop piston ofuma-caddy && docker rename piston piston-old   # kept, not removed: the rollback
@@ -2013,7 +2013,7 @@ docker compose ps        # piston-caddy and piston: Up
 The new containers mount the same volumes (runtimes, certificate). The old
 ones stay stopped, untouched, until 9.3.5.
 
-**9.3.4** 💻 — verify, with PM-Interview-Bank's token (`PISTON_AUTH_TOKEN`)
+**9.3.4** 💻 *(done 2026-10-10)* — verify, with PM-Interview-Bank's token (`PISTON_AUTH_TOKEN`)
 in `$PISTON_AUTH_TOKEN`. The checks are in `boxes/piston/README.md` → *Checks*:
 401 without auth, the six runtimes at their pinned versions, and `print(6*7)`
 returning `42`. Then one **Run Tests** in PM-Interview-Bank.
@@ -2024,7 +2024,7 @@ returning `42`. Then one **Run Tests** in PM-Interview-Bank.
 > docker rename piston-old piston && docker start piston ofuma-caddy
 > ```
 
-**9.3.5** 🖥️ — finish:
+**9.3.5** 🖥️ *(done 2026-10-10)* — finish:
 ```bash
 docker rm piston-old ofuma-caddy
 docker image prune -af                # the images only the old containers used
@@ -2055,14 +2055,19 @@ systemctl is-enabled unattended-upgrades
   Kubernetes workflows (`build-and-deploy.yaml`, `deploy-*-production.yaml`,
   `deploy-*-staging.yaml`) and their secrets (`DIGITALOCEAN_ACCESS_TOKEN`,
   `DOCKERHUB_*`).
-- **App env files:** the per-app R2 keys (`S3_*`, `AWS_*`) are unused now that
-  nagaya runs backups. Remove them, then revoke the matching R2 tokens in
-  Cloudflare. (This touches each backend's env file, so it deploys each
-  backend once.)
-- **PM-Interview-Bank:** point `infra/piston/README.md` → *Where production
-  runs* at `nagaya/boxes/piston/` instead of ofuma's compose file.
+- *(done 2026-10-10)* **App env files:** the per-app R2 backup keys
+  (`S3_BUCKET`, `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+  removed from dmb, abm, nihongo and ofuma (production and staging). Each
+  backend redeployed and passed its health checks. **Still to do (🌐):**
+  revoke those tokens in the **old** Cloudflare account (`1b7325…`), where the
+  per-app backups used to go.
+- **PM-Interview-Bank:** `infra/piston/README.md` → *Where production runs*
+  points at `nagaya/boxes/piston/`: [PR #50](https://github.com/cecil-aqua-jones/PM-Interview-Bank/pull/50), to merge.
+- **nihongo's assets bucket** (`nihongo-assets`, audio and images) is in the
+  old Cloudflare account; it moves to the nagaya account (see *Day-2 →
+  nihongo's assets*).
 
-**9.5** 🌐 **Namecheap** — **Email Forwarding** rules for both domains are
+**9.5** 🌐 *(done 2026-10-10)* **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
 by mistake.
 
