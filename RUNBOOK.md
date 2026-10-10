@@ -2292,6 +2292,35 @@ in production without it.
   (`1b7325…`) on an `r2.dev` address; all 15,579 objects (141.6 MB) were
   copied with their headers and verified key for key before the switch.
 
+### Tokens and pinned tools
+
+**The GHCR pull token** (`GHCR_TOKEN`, §3.3) has no expiry. It only stops
+working if it is revoked (deleted in GitHub, or revoked by GitHub after a
+leak). **Symptom:** every deploy fails at the pull, with *pull failed for
+<project>… has this box run `nagaya login`?* Running sites keep running.
+**Fix:**
+1. 🌐 Make a new token exactly as in §3.3 (classic, `read:packages` only,
+   no expiration), and delete the old one if it still exists.
+2. 💻 In the nagaya repo:
+   ```bash
+   dotenvx set GHCR_TOKEN '<new token>' -f .env.production
+   git commit -am "New GHCR pull token" && git push      # CI's apply pulls it onto the box
+   ```
+3. 🖥️ `nagaya login` (expect *Login Succeeded*), then re-run the failed
+   deploy from GitHub Actions.
+
+**rclone** (the backup tool) is pinned in `bin/nagaya` as `RCLONE_IMAGE`, so
+it never changes overnight. Bump it whenever you like (once a year is plenty):
+1. 💻 Set `RCLONE_IMAGE=rclone/rclone:<new version>` in `bin/nagaya`
+   (releases: https://github.com/rclone/rclone/releases), commit, push. CI's
+   apply puts it on the box; old images are cleaned up.
+2. 🖥️ Prove it before the next 3 a.m. run:
+   ```bash
+   nagaya backup              # ✓ for every database
+   nagaya drill nihongo       # ✓ drill passed (the biggest dump)
+   ```
+   If either fails, revert the commit and push: the previous version comes back.
+
 ### Memory: is the box short?
 
 **How to read `free -m`.** Look at **`available`**, not `free`. `buff/cache`
@@ -2503,10 +2532,8 @@ firewall, compose ports or Caddy.
 - [x] Calendar: the Origin CA certificates' expiry (30 Sep 2041; reminder on
       31 Aug 2041). The GitHub token from §4.2 has no expiry date, so nothing
       to renew; if it is ever revoked, nagaya's CI Apply fails at Terraform.
-- [ ] Yearly: check the box's GHCR pull token still works (`nagaya login`),
-      and bump rclone: backups use a pinned `RCLONE_IMAGE` in `bin/nagaya`;
-      change the tag, run `nagaya backup` and `nagaya drill <db>` on the box,
-      then commit.
+- [ ] Now and then: bump rclone, and if a deploy ever fails at the pull,
+      replace the GHCR token. Both are in Day-2 → *Tokens and pinned tools*.
 - [ ] `EMAIL_FROM` for the futari apps is `hello@<app>.futari.live`, a subdomain
       of the Brevo-authenticated domain. It works today through DMARC's relaxed
       alignment. Worth a look if deliverability ever dips.
