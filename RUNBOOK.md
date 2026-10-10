@@ -2501,8 +2501,10 @@ firewall, compose ports or Caddy.
       and the Piston box: `https://piston.stg.ofuma.ai/api/v2/runtimes`
       (expect **401**: it is up and its auth works).
 - [ ] Calendar: the Origin CA certificates' expiry (2041), the GitHub
-      fine-grained token's renewal (1 year from §4.2), and a yearly look at the
-      GHCR pull token.
+      fine-grained token's renewal (1 year from §4.2), a yearly look at the
+      GHCR pull token, and a yearly **rclone bump**: backups use a pinned
+      `RCLONE_IMAGE` in `bin/nagaya`; change the tag, run `nagaya backup` and
+      `nagaya drill <db>` on the box, then commit.
 - [ ] `EMAIL_FROM` for the futari apps is `hello@<app>.futari.live`, a subdomain
       of the Brevo-authenticated domain. It works today through DMARC's relaxed
       alignment. Worth a look if deliverability ever dips.

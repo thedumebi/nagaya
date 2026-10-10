@@ -639,13 +639,22 @@ cmd_stg() { # up|down <app> [site]
 
 # ───────────────────────────── backups ─────────────────────────────
 
-# aws-cli against R2, with credentials from nagaya's env.
-r2() {
+# rclone against R2, with credentials from nagaya's env; the remote "r2:" is
+# configured entirely through environment variables. Pinned on purpose, so the
+# tool that backups depend on never changes overnight: to update it, bump the
+# tag, then run `nagaya backup` and `nagaya drill <db>` before committing
+# (RUNBOOK.md → Open items). ~32 MB, where aws-cli was 650 MB on disk.
+RCLONE_IMAGE=rclone/rclone:1.75.2
+r2() { # <rclone args…>
   docker run --rm -i \
-    -e AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?missing in .env.production}" \
-    -e AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?missing in .env.production}" \
-    -e AWS_DEFAULT_REGION=auto \
-    amazon/aws-cli "$@" --endpoint-url "${R2_ENDPOINT:?missing in .env.production}"
+    -e RCLONE_CONFIG=/dev/null \
+    -e RCLONE_CONFIG_R2_TYPE=s3 \
+    -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare \
+    -e RCLONE_CONFIG_R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?missing in .env.production}" \
+    -e RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?missing in .env.production}" \
+    -e RCLONE_CONFIG_R2_ENDPOINT="${R2_ENDPOINT:?missing in .env.production}" \
+    -e RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true \
+    "$RCLONE_IMAGE" "$@"
 }
 
 database_exists() { # <postgres container> <database>
@@ -661,8 +670,12 @@ database_location() {
   plan --arg name "$1" '.backups.databases[] | select(.name == $name) | [.resource, .bucket] | @tsv'
 }
 
-newest_backup_key() { # <bucket> <database>
-  r2 s3api list-objects-v2 --bucket "$1" --prefix "$2/$2-" --query 'sort_by(Contents, &LastModified)[-1].Key' --output text
+newest_backup_key() { # <bucket> <database>   prints "<db>/<db>-<stamp>.sql.gz", or nothing
+  local newest_name
+  newest_name="$(r2 lsjson --files-only "r2:$1/$2/" 2>/dev/null \
+    | jq -r --arg prefix "$2-" '[.[] | select(.Name | startswith($prefix))] | sort_by(.ModTime) | last | .Name // empty')"
+  [[ -n "$newest_name" ]] && printf '%s/%s\n' "$2" "$newest_name"
+  return 0
 }
 
 cmd_backup() {
@@ -679,9 +692,9 @@ cmd_backup() {
     local object_key="$database/$database-$timestamp.sql.gz"
     info "$database → s3://$bucket/$object_key"
     if docker exec "$postgres_container" pg_dump -U postgres --no-owner --no-acl -d "$database" | gzip \
-        | r2 s3 cp - "s3://$bucket/$object_key" --only-show-errors; then
+        | r2 rcat "r2:$bucket/$object_key"; then
       local object_size
-      object_size="$(r2 s3api head-object --bucket "$bucket" --key "$object_key" --query ContentLength --output text 2>/dev/null || echo 0)"
+      object_size="$(r2 lsjson --stat "r2:$bucket/$object_key" 2>/dev/null | jq -r '.Size // 0' || echo 0)"
       if (( object_size >= 2048 )); then ok "$database: $object_size bytes"; else warn "$database: uploaded object is only $object_size bytes"; any_failed=1; fi
     else
       warn "$database: dump or upload failed"; any_failed=1
@@ -725,7 +738,7 @@ cmd_restore() { # <db> <file|latest> [--replace]
     object_key="$(newest_backup_key "$bucket" "$database")"
     [[ -n "$object_key" && "$object_key" != None ]] || die "no backups under s3://$bucket/$database/"
     info "restoring s3://$bucket/$object_key"
-    read_dump() { r2 s3 cp "s3://$bucket/$object_key" - | gunzip; }
+    read_dump() { r2 cat "r2:$bucket/$object_key" | gunzip; }
   else
     [[ -f "$source" ]] || die "no such file $source"
     info "restoring $source"
@@ -759,7 +772,7 @@ cmd_drill() { # <db>
   info "drill: s3://$bucket/$object_key → restore_test"
 
   docker exec "$postgres_container" psql -q -U postgres -c 'DROP DATABASE IF EXISTS restore_test' -c 'CREATE DATABASE restore_test'
-  r2 s3 cp "s3://$bucket/$object_key" - | gunzip | sed '/^COMMENT ON EXTENSION /d' \
+  r2 cat "r2:$bucket/$object_key" | gunzip | sed '/^COMMENT ON EXTENSION /d' \
     | docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -q -U postgres -d restore_test >/dev/null
 
   local summaries=() compared_database
