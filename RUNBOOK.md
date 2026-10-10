@@ -2277,6 +2277,15 @@ in production without it.
   Object Read & Write on `nihongo-assets` only. Every object gets its
   Content-Type and `Cache-Control: public, max-age=31536000, immutable`, so
   never overwrite a key with different content; give it a new key.
+- **CORS policy (bucket → Settings → CORS Policy):** required, because the
+  service worker `fetch()`es audio with range requests. Bucket settings do not
+  travel with copied objects: after the move, audio failed until this was set.
+  ```json
+  [{"AllowedOrigins": ["https://nihongo.futari.live", "http://localhost:3000"],
+    "AllowedMethods": ["GET", "HEAD"], "AllowedHeaders": ["range"],
+    "ExposeHeaders": ["Content-Range", "Content-Length", "Accept-Ranges", "Content-Type", "ETag"],
+    "MaxAgeSeconds": 86400}]
+  ```
 - **Backups:** the bucket is not in `nagaya backup`. The audio is regenerable
   (`audio:all`) and the SVG sources are in git.
 - **History:** until 2026-10-10 the bucket was in the old Cloudflare account
