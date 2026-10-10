@@ -2494,10 +2494,12 @@ firewall, compose ports or Caddy.
 
 ## Open items
 
-- [ ] §1.3 ofuma Redis namespacing: code change, before the first `stg up`.
+- [x] §1.3 ofuma Redis namespacing (done in Phase 1).
 - [ ] UptimeRobot checks: `https://futari.live`, `https://dmb.futari.live/api/healthcheck`,
       `https://abm.futari.live/api/healthcheck`, `https://nihongo.futari.live/api/healthcheck`,
-      `https://api.ofuma.ai/healthcheck`, `https://api-doca.ofuma.ai/healthcheck`.
+      `https://api.ofuma.ai/healthcheck`, `https://api-doca.ofuma.ai/healthcheck`,
+      and the Piston box: `https://piston.stg.ofuma.ai/api/v2/runtimes`
+      (expect **401**: it is up and its auth works).
 - [ ] Calendar: the Origin CA certificates' expiry (2041), the GitHub
       fine-grained token's renewal (1 year from §4.2), and a yearly look at the
       GHCR pull token.
