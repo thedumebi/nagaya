@@ -1958,7 +1958,7 @@ and keys (see `boxes/piston/README.md`).
 
 **9.1** 🌐 **Hetzner Cloud** *(done 2026-10-06)*:
 - `dmb-prod`, `ofuma-prod`: **Snapshots** → **Take snapshot**, then **Delete**.
-  Keep the snapshots for a month, then delete them too.
+  The snapshots are deleted too.
 - `ofuma-stg`: **snapshot only**, as the safety net for 9.3. It is not deleted.
 
 **9.2** 💻 **nagaya** — the migration scaffolding in `sites.yaml` *(done 2026-10-06)*:
@@ -2057,15 +2057,12 @@ systemctl is-enabled unattended-upgrades
 - *(done 2026-10-10)* **App env files:** the per-app R2 backup keys
   (`S3_BUCKET`, `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
   removed from dmb, abm, nihongo and ofuma (production and staging). Each
-  backend redeployed and passed its health checks. **Still to do (🌐):**
-  revoke those tokens in the **old** Cloudflare account (`1b7325…`), where the
-  per-app backups used to go.
+  backend redeployed and passed its health checks. The old tokens are revoked.
 - *(done 2026-10-10)* **PM-Interview-Bank:** `infra/piston/README.md` →
   *Where production runs* points at `nagaya/boxes/piston/` ([PR #50](https://github.com/cecil-aqua-jones/PM-Interview-Bank/pull/50), merged).
 - *(done 2026-10-10)* **nihongo's assets bucket** moved from the old
   Cloudflare account to the nagaya one (see *Day-2 → nihongo's assets*).
-  **Still to do (🌐), after a week:** delete the old `nihongo-assets` bucket
-  and its token in the old account (`1b7325…`).
+  The old Cloudflare account (`1b7325…`), with its buckets and tokens, is deleted.
 
 **9.5** 🌐 *(done 2026-10-10)* **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
