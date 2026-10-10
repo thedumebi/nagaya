@@ -2050,19 +2050,18 @@ systemctl is-enabled unattended-upgrades
 - **ofuma, after 9.3:** delete `docker-compose.prod.yml` and `Caddyfile`
   (Piston's config is `boxes/piston/` now); mark `DEPLOY-HETZNER.md`
   historical.
-- **ofuma + DigitalOcean:** check DigitalOcean for any surviving DOKS cluster
-  or managed Postgres, as `DEPLOY-HETZNER.md` asked. Then delete the dead
-  Kubernetes workflows (`build-and-deploy.yaml`, `deploy-*-production.yaml`,
-  `deploy-*-staging.yaml`) and their secrets (`DIGITALOCEAN_ACCESS_TOKEN`,
-  `DOCKERHUB_*`).
+- *(done 2026-10-10)* **ofuma + DigitalOcean:** nothing is left on
+  DigitalOcean. The old Kubernetes workflows (`build-and-deploy.yaml`,
+  `deploy-*-production.yaml`, `deploy-*-staging.yaml`) stay as reference; they
+  are manual-only and cannot deploy anything.
 - *(done 2026-10-10)* **App env files:** the per-app R2 backup keys
   (`S3_BUCKET`, `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
   removed from dmb, abm, nihongo and ofuma (production and staging). Each
   backend redeployed and passed its health checks. **Still to do (🌐):**
   revoke those tokens in the **old** Cloudflare account (`1b7325…`), where the
   per-app backups used to go.
-- **PM-Interview-Bank:** `infra/piston/README.md` → *Where production runs*
-  points at `nagaya/boxes/piston/`: [PR #50](https://github.com/cecil-aqua-jones/PM-Interview-Bank/pull/50), to merge.
+- *(done 2026-10-10)* **PM-Interview-Bank:** `infra/piston/README.md` →
+  *Where production runs* points at `nagaya/boxes/piston/` ([PR #50](https://github.com/cecil-aqua-jones/PM-Interview-Bank/pull/50), merged).
 - *(done 2026-10-10)* **nihongo's assets bucket** moved from the old
   Cloudflare account to the nagaya one (see *Day-2 → nihongo's assets*).
   **Still to do (🌐), after a week:** delete the old `nihongo-assets` bucket
@@ -2273,7 +2272,8 @@ in production without it.
 
 - **Adding media:** generate it on the laptop, then
   `pnpm -C nihongo/backend upload:assets` (`verify:assets` before deleting
-  local files). They use `R2_*` in nihongo's local `.env`: a token with
+  local files). They use `R2_*` in nihongo's local `.env` (plain text, not
+  encrypted; write it with `dotenvx set … --plain` or by hand): a token with
   Object Read & Write on `nihongo-assets` only. Every object gets its
   Content-Type and `Cache-Control: public, max-age=31536000, immutable`, so
   never overwrite a key with different content; give it a new key.
