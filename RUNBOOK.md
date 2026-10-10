@@ -2063,9 +2063,10 @@ systemctl is-enabled unattended-upgrades
   per-app backups used to go.
 - **PM-Interview-Bank:** `infra/piston/README.md` → *Where production runs*
   points at `nagaya/boxes/piston/`: [PR #50](https://github.com/cecil-aqua-jones/PM-Interview-Bank/pull/50), to merge.
-- **nihongo's assets bucket** (`nihongo-assets`, audio and images) is in the
-  old Cloudflare account; it moves to the nagaya account (see *Day-2 →
-  nihongo's assets*).
+- *(done 2026-10-10)* **nihongo's assets bucket** moved from the old
+  Cloudflare account to the nagaya one (see *Day-2 → nihongo's assets*).
+  **Still to do (🌐), after a week:** delete the old `nihongo-assets` bucket
+  and its token in the old account (`1b7325…`).
 
 **9.5** 🌐 *(done 2026-10-10)* **Namecheap** — **Email Forwarding** rules for both domains are
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
@@ -2259,6 +2260,28 @@ its env file to separate them.
 > **Don't publish 5432 to the internet** to skip SSH. It would open the
 > database to the whole internet's password guessing, and Docker-published
 > ports go around ufw. The SSH login is key-only and already guarded.
+
+### nihongo's assets
+
+nihongo's audio (~14,400 `.m4a` clips) and illustrations (~1,200 `.svg`)
+are not in its images or on the box: they live in the R2 bucket
+**`nihongo-assets`** in the nagaya Cloudflare account, served publicly at
+**`https://nihongo-assets.futari.live`** (an R2 custom domain on the
+futari.live zone, minimum TLS 1.2, cached by Cloudflare). The backend turns
+`/audio/...` paths into URLs with `R2_PUBLIC_BASE_URL`, and refuses to start
+in production without it.
+
+- **Adding media:** generate it on the laptop, then
+  `pnpm -C nihongo/backend upload:assets` (`verify:assets` before deleting
+  local files). They use `R2_*` in nihongo's local `.env`: a token with
+  Object Read & Write on `nihongo-assets` only. Every object gets its
+  Content-Type and `Cache-Control: public, max-age=31536000, immutable`, so
+  never overwrite a key with different content; give it a new key.
+- **Backups:** the bucket is not in `nagaya backup`. The audio is regenerable
+  (`audio:all`) and the SVG sources are in git.
+- **History:** until 2026-10-10 the bucket was in the old Cloudflare account
+  (`1b7325…`) on an `r2.dev` address; all 15,579 objects (141.6 MB) were
+  copied with their headers and verified key for key before the switch.
 
 ### Memory: is the box short?
 
