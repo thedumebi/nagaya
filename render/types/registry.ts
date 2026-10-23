@@ -184,6 +184,22 @@ export const emailConfigSchema = z.object({
 export type EmailConfig = z.infer<typeof emailConfigSchema>
 
 // ============================================
+// RUNTIME PINS
+// ============================================
+
+// An exact release such as 24.22.1: images are tagged by it, so no range.
+export const exactVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/, 'an exact version such as 24.22.1')
+
+// The versions every app repo builds with. `pnpm runtime-sync` writes them
+// into each repo listed below (Dockerfile ARGs, .nvmrc, engines) and pushes,
+// which rebuilds and redeploys it.
+export const runtimeConfigSchema = z.object({
+  node: exactVersionSchema,  // node:<node>-alpine, every CI job, and nagaya's own .nvmrc
+  nginx: exactVersionSchema, // the frontend runners: nginx or nginx-unprivileged, <nginx>-alpine
+}).strict()
+export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>
+
+// ============================================
 // APPS, BACKUPS, ALERTS, THE WHOLE FILE
 // ============================================
 
@@ -221,6 +237,11 @@ export const cloudflareRangesCheckConfigSchema = z.object({
 }).strict()
 export type CloudflareRangesCheckConfig = z.infer<typeof cloudflareRangesCheckConfigSchema>
 
+export const runtimeVersionsCheckConfigSchema = z.object({
+  every: z.string(), // cron schedule
+}).strict()
+export type RuntimeVersionsCheckConfig = z.infer<typeof runtimeVersionsCheckConfigSchema>
+
 // Emails about the box, sent through Brevo. Each check is a kind bin/nagaya
 // knows how to run (`nagaya alerts <check>`), with its own schedule; an
 // unknown kind is a render error, since there would be no code behind it.
@@ -230,12 +251,14 @@ export const alertsConfigSchema = z.object({
   checks: z.object({
     'memory': memoryCheckConfigSchema.optional(),
     'cloudflare-ranges': cloudflareRangesCheckConfigSchema.optional(),
+    'runtime-versions': runtimeVersionsCheckConfigSchema.optional(),
   }).strict(),
 }).strict()
 export type AlertsConfig = z.infer<typeof alertsConfigSchema>
 
 export const registrySchema = z.object({
   registry: z.string(), // where images live: <registry>/<app>-<site>-<service>
+  runtime: runtimeConfigSchema,
   origins: z.record(nameSchema, originConfigSchema),
   resources: resourcesConfigSchema,
   backups: backupsConfigSchema,

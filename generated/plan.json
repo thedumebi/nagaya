@@ -616,6 +616,10 @@
       }
     }
   ],
+  "runtime": {
+    "node": "24.22.1",
+    "nginx": "1.30.6"
+  },
   "alerts": {
     "to": [
       "chiwuzohdaniel@gmail.com"
@@ -634,6 +638,9 @@
       },
       "cloudflareRanges": {
         "every": "7 6 * * *"
+      },
+      "runtimeVersions": {
+        "every": "17 6 * * *"
       }
     }
   },

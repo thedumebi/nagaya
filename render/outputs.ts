@@ -147,6 +147,7 @@ function renderAlertsPlan(model: Model) {
     return null
   const memoryCheck = alerts.checks.memory
   const cloudflareRangesCheck = alerts.checks['cloudflare-ranges']
+  const runtimeVersionsCheck = alerts.checks['runtime-versions']
   return {
     to: [alerts.to].flat(),
     from: alerts.from,
@@ -164,6 +165,7 @@ function renderAlertsPlan(model: Model) {
           }
         : null,
       cloudflareRanges: cloudflareRangesCheck ? { every: cloudflareRangesCheck.every } : null,
+      runtimeVersions: runtimeVersionsCheck ? { every: runtimeVersionsCheck.every } : null,
     },
   }
 }
@@ -204,6 +206,8 @@ export function renderPlan(model: Model): string {
     })),
     routes: model.routes.map(route => ({ host: route.host, project: route.project, variant: route.variant, kind: route.kind })),
     crons: model.projects.flatMap(project => project.crons),
+    // The pins every app builds with; `nagaya alerts runtime-versions` checks them.
+    runtime: model.registry.runtime,
     // `to` is always a list here, whichever form sites.yaml used.
     alerts: renderAlertsPlan(model),
     backups: {

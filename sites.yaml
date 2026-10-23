@@ -10,6 +10,16 @@
 # Where images live. Each service's image is <registry>/<app>-<site>-<service>.
 registry: ghcr.io/thedumebi
 
+# The Node and nginx every app repo builds with. Change one and merge:
+# runtime-sync.yml pushes it into each repo below (Dockerfile ARGs, .nvmrc,
+# engines), and that push rebuilds and redeploys the app. nagaya's own .nvmrc
+# must match `node` (`pnpm render` checks). The box emails when a newer fix
+# is out (alerts.checks.runtime-versions). RUNBOOK.md "Day-2 → Bumping Node
+# or nginx".
+runtime:
+  node: 24.22.1                            # LTS lines only: https://nodejs.org/en/about/previous-releases
+  nginx: 1.30.6                            # the stable line (even minor): https://nginx.org/en/download.html
+
 # Machines that DNS records can point at. A site's records follow its origin,
 # so moving a site between boxes is a one-word change. `proxied: false` keeps
 # the record grey-clouded (the box serves its own TLS). During the migration
@@ -80,6 +90,12 @@ alerts:
     # changes the firewall itself. Independent of GitHub's scheduled workflow.
     cloudflare-ranges:
       every: "7 6 * * *"
+    # runtime's pins vs what has shipped since: a Node security release on the
+    # pinned major, a newer nginx patch on the pinned line, or a pinned image
+    # tag missing from Docker Hub. Reports each finding once; the bump stays
+    # yours (RUNBOOK.md "Day-2 → Bumping Node or nginx").
+    runtime-versions:
+      every: "17 6 * * *"
 
 # ─────────────── Apps: one per domain; sites are the subdomains under it ───────────────
 apps:

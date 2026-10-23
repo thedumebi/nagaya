@@ -10,6 +10,7 @@
     "render": "node render/index.ts",
     "render:check": "node render/index.ts --check",
     "render:refresh-cf-ips": "node render/index.ts --refresh-cf-ips",
+    "runtime-sync": "node render/runtime-sync.ts",
     "test": "node --test 'render/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },

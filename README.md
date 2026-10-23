@@ -5,7 +5,7 @@ futari and ofuma site on one VPS.
 
 | | |
 |---|---|
-| **[sites.yaml](sites.yaml)** | The registry: every site, resource, DNS record and alert threshold. |
+| **[sites.yaml](sites.yaml)** | The registry: every site, resource, DNS record and alert threshold, and the Node and nginx versions every app builds with. |
 | **[docs/sites-yaml.md](docs/sites-yaml.md)** | What each key in it means, with a worked example. |
 | **[docs/box-layout.md](docs/box-layout.md)** | Where things live on the box, and why `/srv`. |
 | **[DEPLOY.md](DEPLOY.md)** | Why: today's setup, the decisions, architecture, memory budget. |
@@ -18,7 +18,7 @@ futari and ofuma site on one VPS.
 | `static/` | Static sites Caddy serves directly (the futari.live page). |
 
 ```bash
-nvm use            # Node 24
+nvm use            # Node 24 (.nvmrc = sites.yaml runtime.node)
 pnpm install
 pnpm test          # renderer tests
 pnpm render        # after editing sites.yaml; commit generated/ with it
@@ -30,3 +30,6 @@ How a change flows:
   Terraform plan) → merge → Terraform applies DNS → `nagaya apply` on the box.
 - **An app:** push to its repo → its CI builds images to GHCR →
   `nagaya deploy <project> <sha> --only <the services the push changed>`.
+- **Node or nginx:** edit `runtime` in `sites.yaml` (and `.nvmrc`) → merge →
+  `runtime-sync` pushes the new versions into every app repo → each rebuilds
+  and deploys as above.

@@ -118,6 +118,7 @@ Until the blog repo's first deploy, `blog.futari.live` gets a 502 from Caddy.
 
 ```yaml
 registry: ghcr.io/thedumebi
+runtime:   { node: 24.22.1, nginx: 1.30.6 }
 origins:   { … }
 resources: { … }
 backups:   { … }
@@ -129,6 +130,41 @@ apps:      { … }
 Where images live. A service's image is always
 `<registry>/<app>-<site>-<service>`, e.g. `ghcr.io/thedumebi/ofuma-doca-doca-api`.
 The tag is the git SHA the app repo's CI built; nagaya records it per project.
+
+### `runtime`
+```yaml
+runtime:
+  node: 24.22.1     # exact: images are tagged by it
+  nginx: 1.30.6
+```
+The Node and nginx **every app repo** builds with, in one place. nagaya does
+not build images, so these reach the apps by commit: on merge,
+`.github/workflows/runtime-sync.yml` runs `pnpm runtime-sync`, which pushes one
+commit to each `repo:` below (to `master`, and to `stg` for a site with
+staging). That push runs the app's own deploy workflow, so changing a version
+here rebuilds and redeploys everything on it.
+
+In each app repo the sync owns exactly these lines, and nothing else:
+
+| File | Line |
+|---|---|
+| every `Dockerfile` | `ARG NODE_VERSION=<node>` and, in frontends, `ARG NGINX_VERSION=<nginx>`, above the first `FROM` |
+| `.nvmrc` | `<node>` |
+| `package.json` | `"engines": { "node": "^<node>" }` |
+
+Everything else reads those: `FROM node:${NODE_VERSION}-alpine`, the runner's
+`FROM nginx:${NGINX_VERSION}-alpine` (or `nginxinc/nginx-unprivileged:…`),
+every `actions/setup-node` with `node-version-file: .nvmrc`, and a git hook
+that puts nvm's Node on `PATH` with `v$(sed 's/^v//' .nvmrc)`. A repo that
+hard-codes a version anywhere else is reported and **not** pushed to, so it is
+never half-synced. `pnpm runtime-sync --check` lists such lines.
+
+- **`node`** must be an LTS line; nagaya's own `.nvmrc` must equal it (`pnpm
+  render` fails otherwise).
+- **Knowing when to bump:** `alerts.checks.runtime-versions` emails when a
+  newer fix is out, or when a running app isn't on the pins (below).
+- **`nginx`** should be the stable line (even minor: 1.30, 1.32). Both nginx
+  images publish the same tags.
 
 ### `origins`
 The machines DNS can point at. Every site has an origin. Its A records point
@@ -181,6 +217,8 @@ alerts:
         disk_used_pct: 85
     cloudflare-ranges:
       every: "7 6 * * *"
+    runtime-versions:
+      every: "17 6 * * *"
 ```
 Emails about the box itself, sent to `to` through Brevo with nagaya's
 `BREVO_API_KEY`.
@@ -190,8 +228,8 @@ Emails about the box itself, sent to `to` through Brevo with nagaya's
   `nagaya alerts <check>`, logging to `logs/alerts-<check>.log`.
 - **To switch a check off,** delete it. **To change when it runs,** change
   its `every`. Nothing in code changes for either.
-- **Only kinds nagaya has code for are accepted:** `memory` and
-  `cloudflare-ranges`. A new kind (say, a container that keeps restarting)
+- **Only kinds nagaya has code for are accepted:** `memory`,
+  `cloudflare-ranges` and `runtime-versions`. A new kind (say, a container that keeps restarting)
   needs its code in `bin/nagaya` as well as an entry here, and render refuses
   an unknown kind rather than scheduling a check that does nothing.
 - **To email more people,** make `to` a list.
@@ -220,6 +258,26 @@ which the firewall and Caddy are built from.
 - **It never changes the firewall itself.**
 - **It doesn't depend on GitHub's scheduled workflow,** which can run late or
   not at all.
+
+#### `runtime-versions`
+Checks `runtime` (the Node and nginx every app builds with) against two
+things: what has shipped since, and what is actually running. It emails when
+any of these is true:
+
+| Finding | Means |
+|---|---|
+| A Node release newer than `runtime.node`, on the same major, with a security fix | Bump `runtime.node`. A newer release *without* security fixes is only logged |
+| A newer patch on `runtime.nginx`'s line that **both** nginx images have (`nginx`, `nginxinc/nginx-unprivileged`) | Bump `runtime.nginx` |
+| A pinned tag missing from Docker Hub (`node:<node>-alpine`, either nginx `:<nginx>-alpine`) | Every build FROM it fails. Fix the pin |
+| A running container on another version: a backend's `node -v`, a frontend's `nginx -v` | That app's last build or deploy didn't land (a red build, or a deploy that rolled back). Look at that repo's Actions and `nagaya status` |
+
+- **Why it checks the running containers too:** runtime-sync only proves
+  that each *repo* says the pin. A repo can say 24.22.1 while the box still
+  runs the image its last good deploy built.
+- **Skipped:** containers that aren't running, such as staging while it's down.
+- **One email per distinct set of findings.** When the set changes (a
+  container catches up, a new release ships) you get a new email.
+- **It never changes anything.** The bump stays your change to `sites.yaml`.
 
 Omit the whole `alerts:` block to switch every alert off.
 

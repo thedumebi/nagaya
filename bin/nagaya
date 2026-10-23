@@ -12,7 +12,7 @@
 #   nagaya backup                    dump every database to R2 (cron runs this nightly)
 #   nagaya drill <db>                restore the newest backup into a scratch DB and compare
 #   nagaya cron <id>                 run one scheduled call from sites.yaml
-#   nagaya alerts <check>|--test     run one alert check from sites.yaml (memory, cloudflare-ranges)
+#   nagaya alerts <check>|--test     run one alert check from sites.yaml (memory, cloudflare-ranges, runtime-versions)
 #   nagaya status                    what is running, tags, staging state, memory
 #   nagaya psql <db>                 interactive psql as the superuser
 #   nagaya core <compose args>       docker compose on core.yml, with nagaya's secrets loaded
@@ -848,7 +848,8 @@ cmd_alerts() { # <check>|--test
       ok "test email sent to $(plan '.alerts.to | join(", ")')" ;;
     memory)            check_memory ;;
     cloudflare-ranges) check_cloudflare_ranges ;;
-    *) die "unknown alert check \"$1\" (sites.yaml alerts.checks: memory, cloudflare-ranges)" ;;
+    runtime-versions)  check_runtime_versions ;;
+    *) die "unknown alert check \"$1\" (sites.yaml alerts.checks: memory, cloudflare-ranges, runtime-versions)" ;;
   esac
 }
 
@@ -995,6 +996,137 @@ check_cloudflare_ranges() {
   if send_mail "[nagaya] Cloudflare IP ranges changed" "$email_text"; then
     printf '%s' "$ranges_fingerprint" > "$ALERTS_DIR/cf-ranges"
     ok "reported changed Cloudflare ranges"
+  else
+    warn "could not send the email; will retry next run"
+    return 1
+  fi
+}
+
+# The runtime-versions check (cron, on its own schedule). sites.yaml's
+# runtime pins (the Node and nginx every app builds with) against what has
+# shipped since. It reports three things:
+#   - a Node release on the pinned major that is newer than the pin and
+#     includes a security fix (a newer release with no security fix isn't
+#     worth an email);
+#   - a newer nginx patch on the pinned line that BOTH nginx images have
+#     (the futari frontends use nginx-unprivileged, ofuma's use nginx);
+#   - a pinned image tag that is missing from Docker Hub;
+#   - a running container on another version than the pin: a backend's
+#     `node -v`, a frontend's `nginx -v` (Node only builds a frontend). The
+#     sync only proves each REPO says the pin. A build that failed, or a
+#     deploy that rolled back, leaves the old version running, and this is
+#     what notices. A container that isn't running (staging while it's
+#     down) is skipped.
+# GitHub's runtime-sync workflow also runs weekly, but scheduled workflows
+# can run late or be skipped; this check doesn't depend on them. It only
+# reports: the bump stays a reviewed change to sites.yaml.
+check_runtime_versions() {
+  local node_pin nginx_pin
+  node_pin="$(plan .runtime.node)"
+  nginx_pin="$(plan .runtime.nginx)"
+  local findings=()
+
+  # ── Node: newer than the pin, same major, with a security fix ──
+  local node_releases node_advice
+  if ! node_releases="$(curl -fsS --max-time 20 https://nodejs.org/dist/index.json)"; then
+    warn "$(date -u +%FT%TZ) could not fetch nodejs.org/dist/index.json; will try again next run"
+    return 0
+  fi
+  # Prints "<newest later version> <true|false: any later one is a security release>",
+  # or nothing when the pin is the newest on its major.
+  node_advice="$(jq -r --arg pin "$node_pin" '
+    def parts: ltrimstr("v") | split(".") | map(tonumber);
+    ($pin | parts) as $pinned
+    | [.[] | select((.version | parts)[0] == $pinned[0] and (.version | parts) > $pinned)] as $later
+    | if ($later | length) == 0 then empty
+      else "\($later | max_by(.version | parts) | .version | ltrimstr("v")) \($later | any(.security))" end' <<<"$node_releases")"
+  if [[ -n "$node_advice" ]]; then
+    local node_latest node_security
+    read -r node_latest node_security <<<"$node_advice"
+    if [[ "$node_security" == true ]]; then
+      findings+=("• Node $node_latest is out, and a release since $node_pin includes security fixes. Pinned: $node_pin.")
+    else
+      info "$(date -u +%FT%TZ) Node $node_latest is out (no security fixes since $node_pin); not worth an email"
+    fi
+  fi
+
+  # ── nginx: the newest patch on the pinned line that both images have ──
+  local nginx_line="${nginx_pin%.*}" nginx_repo nginx_latest="" repo_latest
+  for nginx_repo in library/nginx nginxinc/nginx-unprivileged; do
+    if ! repo_latest="$(curl -fsS --max-time 20 "https://hub.docker.com/v2/repositories/$nginx_repo/tags?page_size=100&name=$nginx_line." \
+      | jq -r --arg line "$nginx_line" '
+          [.results[].name | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+-alpine$")) | rtrimstr("-alpine")
+           | select(startswith($line + "."))]
+          | max_by(split(".") | map(tonumber)) // empty')"; then
+      warn "$(date -u +%FT%TZ) could not fetch $nginx_repo's tags from Docker Hub; will try again next run"
+      return 0
+    fi
+    [[ -z "$repo_latest" ]] && repo_latest="$nginx_pin"
+    # The lower of the two: the pin can only move to a tag both images have.
+    if [[ -z "$nginx_latest" ]] || [[ "$(printf '%s\n%s\n' "$repo_latest" "$nginx_latest" | sort -V | head -1)" == "$repo_latest" ]]; then
+      nginx_latest="$repo_latest"
+    fi
+  done
+  if [[ "$(printf '%s\n%s\n' "$nginx_pin" "$nginx_latest" | sort -V | tail -1)" != "$nginx_pin" ]]; then
+    findings+=("• nginx $nginx_latest is out on both nginx images. Pinned: $nginx_pin.")
+  fi
+
+  # ── the pinned tags themselves ──
+  local image_tag
+  for image_tag in "library/node:$node_pin-alpine" "library/nginx:$nginx_pin-alpine" "nginxinc/nginx-unprivileged:$nginx_pin-alpine"; do
+    curl -fs --max-time 20 -o /dev/null "https://hub.docker.com/v2/repositories/${image_tag%%:*}/tags/${image_tag#*:}" \
+      || findings+=("• ${image_tag#library/} is not on Docker Hub, so every app build FROM it fails.")
+  done
+
+  # ── what is actually running ──
+  local container running_version checked=0
+  for container in $(plan '.projects[].services[].container'); do
+    container_running "$container" || continue
+    checked=$(( checked + 1 ))
+    if running_version="$(docker exec "$container" node -v 2>/dev/null)"; then
+      [[ "${running_version#v}" == "$node_pin" ]] \
+        || findings+=("• $container runs Node ${running_version#v}; the pin is $node_pin. Its last build or deploy didn't land: check that repo's Actions, and \`nagaya status\`.")
+    elif running_version="$(docker exec "$container" nginx -v 2>&1)"; then
+      running_version="${running_version##*/}"
+      [[ "$running_version" == "$nginx_pin" ]] \
+        || findings+=("• $container runs nginx $running_version; the pin is $nginx_pin. Its last build or deploy didn't land: check that repo's Actions, and \`nagaya status\`.")
+    else
+      findings+=("• $container has neither node nor nginx to ask for a version.")
+    fi
+  done
+
+  if (( ${#findings[@]} == 0 )); then
+    info "$(date -u +%FT%TZ) runtime pins current: Node $node_pin, nginx $nginx_pin, and all $checked running containers are on them"
+    return 0
+  fi
+
+  # Report each distinct set of findings once, however long the bump takes.
+  mkdir -p "$ALERTS_DIR"
+  local findings_fingerprint
+  findings_fingerprint="$(printf '%s\n' "${findings[@]}" | sha256sum | cut -c1-16)"
+  if [[ "$(cat "$ALERTS_DIR/runtime-versions" 2>/dev/null || true)" == "$findings_fingerprint" ]]; then
+    info "$(date -u +%FT%TZ) runtime findings unchanged; already reported"
+    return 0
+  fi
+  local email_text
+  email_text="$(
+    echo "sites.yaml → runtime (Node $node_pin, nginx $nginx_pin) needs a look:"
+    echo
+    printf '%s\n' "${findings[@]}"
+    echo
+    echo "Node releases: https://nodejs.org/en/blog/vulnerability"
+    echo "nginx images:  https://hub.docker.com/r/nginxinc/nginx-unprivileged/tags"
+    echo
+    echo "To fix, on the laptop, in nagaya: set runtime.node / runtime.nginx in sites.yaml"
+    echo "(and .nvmrc to the same node), then"
+    echo "  pnpm test && pnpm render:check && pnpm runtime-sync --dry-run"
+    echo "  git commit -am 'Node <version>' && git push"
+    echo "Merging pushes the new versions into every app repo, and each one redeploys."
+    echo "RUNBOOK.md → Day-2 → \"Bumping Node or nginx\"."
+  )"
+  if send_mail "[nagaya] Node or nginx: the pins or the running apps need a look" "$email_text"; then
+    printf '%s' "$findings_fingerprint" > "$ALERTS_DIR/runtime-versions"
+    ok "reported ${#findings[@]} runtime finding(s)"
   else
     warn "could not send the email; will retry next run"
     return 1

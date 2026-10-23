@@ -1,0 +1,82 @@
+# sites.yaml → runtime is the Node and nginx every app repo builds with.
+#
+# On a merge to master that touches sites.yaml (or the sync itself), and when
+# run by hand: push the pins into every app repo. One commit per repo and
+# deploy branch (master, and stg where a site has staging), and only where a
+# pinned line differs, so a sites.yaml change that leaves `runtime` alone
+# pushes nothing. Each push runs that app's own deploy workflow, which
+# rebuilds every image on the new versions and deploys it.
+#
+# Weekly: check that no app repo has drifted (someone hard-coded a version
+# again). Drift only happens by hand, so a late or skipped scheduled run costs
+# little. Whether a NEWER Node or nginx fix is out is the box's job, not this
+# workflow's: `nagaya alerts runtime-versions` runs from the box's cron
+# (sites.yaml → alerts.checks), because GitHub's schedules can be late or
+# skipped. `pnpm runtime-sync --latest` does the same check on the laptop.
+#
+# Until NAGAYA_SYNC_TOKEN exists (RUNBOOK.md §10.5), every run says so and
+# ends green, like apply.yml without its Terraform secrets.
+#
+# RUNBOOK.md "Day-2 → Bumping Node or nginx".
+name: Runtime sync
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - sites.yaml
+      - render/runtime-sync.ts
+  schedule:
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+# Never two syncs at once: the second would race the first's pushes.
+concurrency:
+  group: runtime-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      # A fine-grained PAT: Contents read/write on the app repos only
+      # (RUNBOOK.md §10.5). Not GITHUB_TOKEN: a push made with that never
+      # triggers the app repos' deploy workflows.
+      NAGAYA_SYNC_TOKEN: ${{ secrets.NAGAYA_SYNC_TOKEN }}
+    steps:
+      - name: Sync token present?
+        id: token
+        run: |
+          if [ -z "$NAGAYA_SYNC_TOKEN" ]; then
+            echo "::notice::NAGAYA_SYNC_TOKEN not set yet (RUNBOOK.md §10.5); skipping the sync."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.token.outputs.ready == 'true'
+        uses: actions/checkout@v7
+      - if: steps.token.outputs.ready == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - if: steps.token.outputs.ready == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - if: steps.token.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.token.outputs.ready == 'true'
+        run: pnpm test
+      # This repo is public, and so are its Actions logs: the sync prints only
+      # repo@branch → outcome, and for a problem the one offending line. The
+      # full diffs print only with --dry-run, on the laptop.
+      - name: Push the pins into every app repo
+        if: steps.token.outputs.ready == 'true' && github.event_name != 'schedule'
+        run: pnpm runtime-sync
+      - name: Any app repo drifted from the pins?
+        if: steps.token.outputs.ready == 'true' && github.event_name == 'schedule'
+        run: pnpm runtime-sync --check
