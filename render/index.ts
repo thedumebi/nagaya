@@ -98,6 +98,13 @@ async function main() {
     throw error
   }
 
+  // nagaya runs on the Node it pins for the apps; CI's setup-node reads .nvmrc.
+  const nvmrc = readFileSync(join(REPO_DIR, '.nvmrc'), 'utf8').trim()
+  if (nvmrc !== model.registry.runtime.node) {
+    console.error(`✗ .nvmrc says ${nvmrc} but sites.yaml runtime.node is ${model.registry.runtime.node}. Make them match.`)
+    process.exit(1)
+  }
+
   const files = renderAll(model, cloudflareRanges)
   const stalePaths = staleComposeFiles(files)
 

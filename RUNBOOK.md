@@ -50,9 +50,10 @@ silently kills compound commands.
 > echo 'setopt interactivecomments' >> ~/.zshrc && source ~/.zshrc
 > ```
 
-> **Node 24 for this repo.** `nagaya` uses Node 24 (`.nvmrc` says `24`), which
-> runs the TypeScript renderer directly with no build step. The app repos stay
-> on their own versions.
+> **One Node for everything.** `sites.yaml` → `runtime.node` is the Node every
+> app repo builds and tests with, and nagaya's own `.nvmrc` must match it.
+> nagaya runs its TypeScript renderer directly on it, with no build step.
+> Bumping it: Day-2 → *Bumping Node or nginx*.
 
 ### Names used throughout
 
@@ -81,6 +82,7 @@ reference material is at the end. The Done column is for you to tick.
 | **7** | ofuma staging: save its data now, bring it up when wanted | 🖥️ 💻 | |
 | **8** | Backups verified and a restore drill passed | 🖥️ | |
 | **9** | Decommission two Hetzner boxes, make the third the Piston box, remove the migration scaffolding | 🌐 💻 🖥️ | |
+| **10** | One Node and nginx for every app, pinned in `sites.yaml` and pushed by `runtime-sync` (Node 24.22.1 for the 21 Oct 2026 security release) | 💻 🌐 🖥️ | |
 
 > **Nothing is cut over until Phase 6.** Phases 0–5 build the new home next to
 > the old ones. Until a site's DNS record moves in §6.x, visitors never touch
@@ -2068,6 +2070,298 @@ systemctl is-enabled unattended-upgrades
 now dead config (mail goes through Cloudflare). Delete them so nobody edits them
 by mistake.
 
+## Phase 10 — One Node and nginx for every app
+
+**Why.** Node's security release of 21 Oct 2026 fixed 10 CVEs, four of them
+high, one of them a remote-code-execution bug in Brotli decompression. The
+fixed versions are 22.23.4, 24.22.1 and 26.12.1. Every app image was still
+built from `node:22.17.0-alpine`, and the version was written out in about 30
+places across four repos. The futari frontends also ran
+`nginx-unprivileged:1.27`, a mainline line that no longer gets fixes, and
+ofuma's ran an unpinned `nginx:alpine`.
+
+**What this phase leaves behind.** `sites.yaml` → `runtime` is the only place
+either version is written by hand (docs/sites-yaml.md → *`runtime`*). Merging a
+change to it makes `runtime-sync.yml` push one commit to every app repo's
+deploy branch, and that push rebuilds and redeploys the app the normal way.
+Bumping later is Day-2 → *Bumping Node or nginx*.
+
+> **Why 24 and not 26.** Node 26 becomes LTS on 28 Oct 2026, a week after
+> this release. 24 (Krypton) is LTS until April 2028 and nagaya already ran on
+> it, so it was the smallest jump that fixes the CVEs today. Moving to 26 later
+> is a major bump (Day-2 → *Bumping Node or nginx*).
+
+> **The order matters, and nagaya can merge first.** The app repos are
+> migrated (10.2–10.4) **before** runtime-sync gets its token (10.5).
+> - **Until 10.5:** every *Runtime sync* run prints *NAGAYA_SYNC_TOKEN not
+>   set yet* and ends **green**, the same way `apply.yml` skips Terraform
+>   without its secrets. So merging nagaya (10.1) doesn't send you a failure
+>   email.
+> - **After 10.5:** a repo that isn't migrated yet is reported as
+>   `→ problems` and never pushed to.
+
+> **Expect a daily email until 10.4 is done.** From the merge in 10.1, the
+> box's `nagaya alerts runtime-versions` (06:17 UTC) compares every running
+> container with the pins. Until an app ships in 10.4, its containers still
+> run Node 22.17.0 and nginx 1.27 (or ofuma's unpinned nginx). The email lists
+> each one. As each app lands, the list shrinks and a new email says so. When
+> it's empty, the log says *all … running containers are on them*. Use it as
+> the rollout checklist.
+
+### 10.1 💻 LAPTOP — nagaya: the pins and the sync
+
+In nagaya (one commit): `runtime:` in `sites.yaml`, `.nvmrc` = `24.22.1`,
+`render/runtime-sync.ts` with its tests, `.github/workflows/runtime-sync.yml`,
+and `templates/app-repo/*.yml` on `node-version-file: .nvmrc`.
+```bash
+unset -f cd pnpm node npm npx 2>/dev/null
+cd ~/Documents/projects/nagaya && nvm use        # expect: Now using node v24.22.1
+pnpm typecheck && pnpm test && pnpm render:check  # expect: all tests pass; ✓ generated/ matches sites.yaml
+pnpm runtime-sync --latest                        # expect: ✓ Node 24.22.1 … ✓ nginx 1.30.6 …
+pnpm runtime-sync --check                         # before 10.2: every hard-coded version, per repo, → problems
+```
+`--check` and `--latest` push nothing. On the laptop the sync clones with your
+`gh` login (`gh auth status` must show `thedumebi`).
+
+Then commit and push nagaya. That merge does three things:
+- *Apply* installs the box's new crontab line, `nagaya alerts
+  runtime-versions` (§10.6 checks it).
+- *Runtime sync* starts, because `sites.yaml` changed, and ends green with the
+  notice above.
+- `generated/plan.json` gets a `runtime` block, which the alert check reads.
+  Otherwise it's an ordinary apply: `compose up -d` leaves unchanged
+  containers running, and Caddy reloads.
+
+### 10.2 💻 LAPTOP — migrate each app repo, on a branch
+
+In each of `dmb.futari`, `abm.futari`, `nihongo.futari` and `ofuma` (the
+`ofuma.ai` repo), on a branch **`nagaya/runtime-pins`** off `master`, one commit:
+
+| File | Change |
+|---|---|
+| every `Dockerfile` | `ARG NODE_VERSION=24.22.1` above the first `FROM` (frontends also `ARG NGINX_VERSION=1.30.6`), with a comment that nagaya owns them; every `FROM node:22.17.0-alpine` → `FROM node:${NODE_VERSION}-alpine`; the runner `FROM nginxinc/nginx-unprivileged:1.27-alpine` (futari) or `FROM nginx:alpine` (ofuma) → the same image `:${NGINX_VERSION}-alpine` |
+| `.nvmrc` | `v22.17.0` → `24.22.1` |
+| root `package.json` | `engines.node` `22.17.0` → `^24.22.1` |
+| `.github/workflows/*` | every `actions/setup-node` `node-version: …` → `node-version-file: .nvmrc` |
+| each package's `package.json` | `@types/node` → `^24.0.0` (from `^22`; in ofuma `ofuma/backend` and `internals` were on `^20`), then `pnpm install` to refresh `pnpm-lock.yaml` |
+| ofuma only: `.husky/pre-commit` | `export PATH="$HOME/.nvm/versions/node/v22.17.0/bin:$PATH"` → `…/node/v$(sed 's/^v//' .nvmrc)/bin…`. The hook runs the whole test suite, so with the old line every commit tested on Node 22 |
+| ofuma only: `doca/cli/action.yml` | `node-version: '22'` → `'24'` by hand. It runs in **customers'** workflows, so it is not in `.github/workflows` and the sync never touches it |
+
+The Dockerfiles in ofuma: `ofuma/backend`, `ofuma/frontend`, `doca/api`,
+`doca/web` and `internals`. `ofuma/backend`, `doca/api` and `internals` each
+have two `FROM node:` stages. Both must use the ARG, which works because a
+global ARG (above the first `FROM`) is visible to every `FROM` line.
+
+Then, in each repo, on Node 24, with the pnpm its `packageManager` names:
+```bash
+unset -f cd pnpm node npm npx 2>/dev/null
+cd ~/Documents/projects/dmb.futari && nvm use      # expect: Now using node v24.22.1 (from the new .nvmrc)
+pnpm install                                       # the lockfile changes only in @types/node and what hangs off it
+pnpm --filter @dmb/shared build                    # nihongo: @nihongo/shared; abm: @abm/shared
+pnpm lint && pnpm typecheck && pnpm test           # expect: all green
+git diff master --stat                             # expect: only the files in the table above
+```
+For ofuma, build its shared packages first, as its CI does:
+`pnpm run build --filter=@ofuma/shared --filter=@doca/shared`.
+
+> ⚠️ **ofuma on the laptop: check a failure on a clean checkout before believing it.**
+> On 2026-10-23 the laptop's ofuma checkout failed `@doca/api`'s typecheck
+> with 13 errors such as *'@doca/shared/types' has no exported member
+> 'GenerationJobData'*. It failed the same way on Node 22 and on Node 24. A
+> fresh `git worktree add` of `master`, with the migration applied, had 0
+> errors on both. The cause was stale ignored build state in the old
+> checkout (`doca/api/tsconfig.tsbuildinfo`, `dist/`), not the migration. To
+> check a failure the same way:
+> ```bash
+> git worktree add --detach /tmp/ofuma-clean nagaya/runtime-pins
+> cd /tmp/ofuma-clean && pnpm install --frozen-lockfile
+> pnpm run build --filter=@ofuma/shared --filter=@doca/shared && pnpm --filter @doca/api run typecheck
+> cd - && git worktree remove /tmp/ofuma-clean
+> ```
+> Also, `pnpm run test` across every ofuma package at once can time out one
+> golden-set test (5 s limit) on a busy laptop. It passes on its own (`cd
+> ofuma/shared && pnpm exec vitest run src/services/golden-set/`), and with
+> `pnpm run test --concurrency=2`.
+
+> **The lockfile diff, checked 2026-10-23.** In dmb, abm and nihongo it was
+> `@types/node` 22.x → 24.19.2 and the peer-resolution suffixes on vite and
+> vitest that name it. Nothing else moved. If yours shows other packages, the
+> install did more than refresh `@types/node`, so look before committing.
+
+### 10.3 🌐 BROWSER (GitHub) — build the images in CI, deploying nothing
+
+A push to `nagaya/runtime-pins` triggers nothing: the deploy workflows run on
+`push` only for `master` (and `stg`). So build by hand from the branch, the way
+§1.7.1 did:
+
+1. 💻 `git push -u origin nagaya/runtime-pins` in each repo. In ofuma also
+   `git push -u origin nagaya/runtime-pins-stg` (made in 10.4, *ofuma `stg`*;
+   do that part first).
+2. 🌐 repo → **Actions** → **Deploy (nagaya)** → **Run workflow** → branch
+   **`nagaya/runtime-pins`**, **Deploy after building** **unticked** → **Run
+   workflow**. In ofuma, run both **Deploy ofuma** and **Deploy doca**, once
+   for each of the two branches.
+   (A `workflow_dispatch` run uses the workflow file from the branch you pick,
+   so this also tests the `node-version-file` change.)
+3. Expect the **test** job (on Node 24.22.1: its *Setup Node* step prints the
+   version), then one **build** job per service, all green. A manual run
+   builds every service.
+
+This is the check that the new base tags exist (`node:24.22.1-alpine`,
+`nginxinc/nginx-unprivileged:1.30.6-alpine`, `nginx:1.30.6-alpine`) and that
+native modules such as `better-sqlite3` compile on Node 24 inside alpine. The
+images are pushed to GHCR tagged with the branch's SHA, and nothing runs them.
+
+> ⚠️ **If a build fails here,** nothing is deployed and the live sites are
+> untouched. Fix it on the branch and run again. A failure in the **nginx**
+> stage most likely means the tag isn't published for that image yet.
+> `pnpm runtime-sync --latest` in nagaya checks all three pinned tags and
+> prints `✗ <image>:<tag> is not on Docker Hub` for a missing one. (Checked
+> 2026-10-24: all three exist.) If one is missing, use the newest 1.30.x that
+> both nginx images have, and set `sites.yaml` → `runtime.nginx` to the same
+> value.
+
+### 10.4 💻 + 🖥️ — ship, one repo at a time
+
+Order: **dmb → abm → nihongo → ofuma `stg` → ofuma `master`**. Finish each
+repo (deploy green, checks below) before the next. Per repo:
+
+1. 💻 Fast-forward `master` to the branch and push. **This deploys.**
+   ```bash
+   unset -f cd pnpm node npm npx 2>/dev/null
+   cd ~/Documents/projects/dmb.futari
+   git checkout master && git pull --ff-only
+   git merge --ff-only nagaya/runtime-pins && git push   # Deploy (nagaya) starts: test, build, deploy
+   ```
+   The push changes both Dockerfiles, so every service rebuilds and deploys.
+   If the health checks fail, `nagaya deploy` rolls those services back on its
+   own and the job goes red ([Rolling back](#rolling-back)). The site stays up
+   on Node 22.17.0 while you look.
+2. 🖥️ SERVER (`deploy`) — expect the new SHA on every service, and the new
+   versions inside:
+   ```bash
+   nagaya status                                   # futari-dmb: backend <sha> · frontend <sha>, both healthy
+   docker exec futari-dmb-backend node -v          # expect: v24.22.1
+   docker exec futari-dmb-frontend nginx -v        # expect: nginx version: nginx/1.30.6
+   nagaya alerts runtime-versions                  # this app's containers are gone from the list
+   ```
+3. 🌐 Open the site, log in, and check the frontend has its runtime values:
+   the page title is right, and the browser's network tab shows `/api` calls
+   going to the right host. This tests `env.sh` and `nginx.conf` on nginx 1.30.
+   Better Stack's checks for the site stay green.
+
+**ofuma `stg`.** `stg` has diverged from `master` (they are not merged into
+each other), so the migration goes onto `stg` as its own commit, on its own
+branch `nagaya/runtime-pins-stg`. Make it before 10.3, so CI builds it too:
+```bash
+cd ~/Documents/projects/ofuma
+git fetch origin
+git switch -c nagaya/runtime-pins-stg origin/stg
+git cherry-pick nagaya/runtime-pins       # one commit; on a conflict in pnpm-lock.yaml: git checkout --ours pnpm-lock.yaml (stg's), pnpm install, git add pnpm-lock.yaml, git cherry-pick --continue
+pnpm install --frozen-lockfile            # proves the lockfile matches stg's package.json files
+pnpm run build --filter=@ofuma/shared --filter=@doca/shared
+pnpm lint && pnpm typecheck && pnpm test
+```
+Checked 2026-10-24: the cherry-pick applied with no conflicts.
+
+To ship it, after 10.3 is green for this branch:
+```bash
+git switch stg && git pull --ff-only
+git merge --ff-only nagaya/runtime-pins-stg && git push   # Deploy ofuma + Deploy doca start, to staging
+```
+A push to `stg` **starts staging** if it is down (§7.6). Check
+`stg.ofuma.ai` and `doca-stg.ofuma.ai`, then `nagaya stg down ofuma` on the
+box when you're done. The containers are `ofuma-main-stg-backend`,
+`ofuma-doca-stg-doca-api` and so on (`nagaya status` lists them).
+
+**ofuma `master`**, last, as in step 1. The containers to check are
+`ofuma-main-backend`, `ofuma-main-frontend`, `ofuma-doca-doca-api` and
+`ofuma-doca-doca-web`. `internals` isn't deployed by nagaya. It is
+migrated anyway, so its Dockerfile can't drift.
+
+Then delete the branch in each repo:
+`git branch -d nagaya/runtime-pins && git push origin --delete nagaya/runtime-pins`
+(in ofuma also `nagaya/runtime-pins-stg`).
+
+### 10.5 🌐 BROWSER (GitHub) — a token for runtime-sync
+
+Profile → **Settings** → **Developer settings** → **Personal access tokens** →
+**Fine-grained tokens** → **Generate new token**:
+- **Name:** `nagaya-runtime-sync` · **Expiration:** 1 year (the maximum; put
+  the renewal date in your calendar and in *Open items* below)
+- **Resource owner:** `thedumebi`
+- **Repository access:** **Only select repositories** → `dmb.futari`,
+  `abm.futari`, `nihongo.futari`, `ofuma.ai`
+- **Repository permissions:** **Contents → Read and write** (Metadata → Read
+  is added automatically). Not *Workflows*: after 10.2 the sync never edits a
+  workflow file, and GitHub would refuse a push that did.
+
+Then **nagaya** repo → **Settings** → **Secrets and variables** → **Actions**
+→ **New repository secret** → name **`NAGAYA_SYNC_TOKEN`**, the token as the
+value.
+
+> **Why not `GITHUB_TOKEN`.** That token only reaches nagaya itself. A push
+> made with it would also never start the app repos' deploy workflows: GitHub
+> doesn't trigger workflows from pushes by `GITHUB_TOKEN`, to prevent loops.
+
+### 10.6 🌐 BROWSER (GitHub) — the first sync, which pushes nothing
+
+nagaya → **Actions** → **Runtime sync** → **Run workflow** → `master`. Expect,
+under *Push the pins into every app repo*:
+```
+sync: Node 24.22.1, nginx 1.30.6
+  thedumebi/dmb.futari@master
+    → up to date
+  …                                   # abm, nihongo, ofuma.ai@master, ofuma.ai@stg: all → up to date
+```
+"Up to date" everywhere means 10.2–10.4 left exactly what the sync would
+have written, the token works on every repo, and no repo has a hard-coded
+version left. From now on the weekly run (Mondays 06:37 UTC) does `--check`
+only, and merging a change to `runtime` does the real pushes.
+
+**The box's version check.** 🖥️ SERVER (`deploy`):
+```bash
+crontab -l | grep runtime-versions          # expect: 17 6 * * * /srv/nagaya/bin/nagaya alerts runtime-versions >> …
+nagaya alerts runtime-versions              # expect: • <time> runtime pins current: Node 24.22.1, nginx 1.30.6, and all <n> running containers are on them
+```
+This is the check that tells you a bump is due. It runs daily from the box's
+cron, not from GitHub, whose schedules can run late or be skipped. It works
+the way *cloudflare-ranges* does: one email per new finding, and it never
+changes anything (docs/sites-yaml.md → *`runtime-versions`*). Its email goes
+the same way as every alert, so `nagaya alerts --test` (acceptance test K)
+proves delivery.
+
+> **Tested 2026-10-24** against the live nodejs.org and Docker Hub, with
+> pins set to provoke each case:
+> - `24.22.0` emailed *Node 24.22.1 is out … security fixes*;
+> - nginx `1.30.5` emailed *nginx 1.30.6 is out on both nginx images*;
+> - nginx `1.30.99` emailed that both nginx tags are missing;
+> - the real pins logged *runtime pins current*;
+> - a second run with the same finding logged *already reported* and sent
+>   nothing;
+> - with `docker` stubbed, a backend on `v22.17.0` and a frontend on
+>   `nginx/1.27.5` were each named in the email, and a stopped container
+>   was skipped.
+>
+> Don't test it by changing `sites.yaml`: once the token exists, that merge
+> pushes to every app repo.
+
+**If a repo shows `→ problems`:** the run lists each line that still names a
+version. Fix it in that repo as in 10.2, push, and run *Runtime sync* again.
+**If it shows `→ pushed`:** a file differed from what 10.2 wrote, and the
+sync fixed it. That push deploys like any other, so check the site as in
+10.4.
+
+### 10.7 Rolling back this phase
+
+- **One app, after 10.4:** in that repo, `git revert <the migration commit>
+  && git push`. The deploy rebuilds it on Node 22.17.0. Its Dockerfiles
+  hard-code a version again, so from then on the sync reports that repo as
+  `→ problems` and never pushes to it, and the weekly run goes red. That's
+  expected until you migrate the repo again (10.2).
+- **The sync itself:** delete `NAGAYA_SYNC_TOKEN`. The workflow then fails at
+  the clone and never pushes. The apps keep whatever they last built.
+
 ---
 
 ## Shipping a change
@@ -2078,6 +2372,7 @@ by mistake.
 | **App config / secrets** | `dotenvx set KEY value -f <app>/backend/.env.production`, commit, push. The env file is baked into the image, so a config change is a deploy like any other. A changed `PG_PASSWORD` is applied to the role by that deploy. |
 | **The registry** (`sites.yaml`) | Branch, edit, `pnpm render`, commit both, open a PR. CI shows the Terraform plan. Merge → Terraform apply → `nagaya apply`. |
 | **nagaya itself** (`bin/nagaya`, renderer, static page) | PR → merge; `nagaya apply` pulls it. |
+| **Node or nginx** (every app) | Edit `runtime` in `sites.yaml` and nagaya's `.nvmrc`, commit, push. *Runtime sync* pushes one commit to each app repo's deploy branch, and each deploys as under **App code**. Day-2 → *Bumping Node or nginx*. |
 | **The futari.live page** | Edit `static/futari/`, PR → merge. Caddy reads from disk, so no reload is needed. |
 | **Cloudflare's IP ranges** | Two independent signals: the box's daily `nagaya alerts cloudflare-ranges` (cron, `sites.yaml` → `alerts.checks`) emails you when the published ranges differ from the repo's, and the weekly bot PR does the edit for you. Merge the PR (or run `pnpm render:refresh-cf-ips` and open one yourself), then `sudo /srv/nagaya/generated/firewall.sh` on the box. The PR only runs `pr.yml`'s checks if the `BOT_PR_TOKEN` secret is set (see the workflow's comment); otherwise the merge's `apply.yml` is the check. Either way, enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** once. |
 
@@ -2189,7 +2484,7 @@ merge. For an emergency without CI: `git revert` locally, `pnpm render`,
 | `/srv/nagaya/state/tags/` | the image tag each project runs (`<project>.env`) and the previous one (`.prev.env`) |
 | `/srv/nagaya/state/stg/` | `up` / `down` per staging project |
 | `/srv/nagaya/state/alerts/` | alert bookkeeping: last swap counters, when each alert was last sent |
-| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts-memory.log`, `alerts-cloudflare-ranges.log` |
+| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts-memory.log`, `alerts-cloudflare-ranges.log`, `alerts-runtime-versions.log` |
 | `/srv/shared/futari/geodata` | GeoLite2, shared by the futari backends |
 | `/etc/docker/daemon.json` | log rotation, address pool (§2.7) |
 
@@ -2289,7 +2584,68 @@ in production without it.
   (`1b7325…`) on an `r2.dev` address; all 15,579 objects (141.6 MB) were
   copied with their headers and verified key for key before the switch.
 
+### Bumping Node or nginx
+
+`sites.yaml` → `runtime` pins both for every app repo. You never edit an app
+repo's Dockerfile, `.nvmrc` or workflow for this. You'll hear it's time in
+one of two ways: a Node security announcement, or the box's email
+**[nagaya] Node or nginx: a newer fix is out** (from `nagaya alerts
+runtime-versions`, daily on the box's cron). The email says which versions
+to set. To check by hand from the laptop: `pnpm runtime-sync --latest`.
+
+1. 💻 In nagaya:
+   ```bash
+   unset -f cd pnpm node npm npx 2>/dev/null
+   # sites.yaml: runtime.node and/or runtime.nginx. .nvmrc: the same node.
+   pnpm test && pnpm render:check
+   pnpm runtime-sync --dry-run      # the diff each app repo will get; pushes nothing
+   git commit -am "Node <version>" && git push
+   ```
+2. 🌐 GitHub Actions → *Runtime sync*: one `→ pushed` per repo and branch
+   (`dmb.futari`, `abm.futari`, `nihongo.futari`, `ofuma.ai` master and stg).
+   Each push starts that repo's deploy workflow, so watch those go green.
+3. 🖥️ Spot-check, or wait for the next morning's check:
+   ```bash
+   nagaya alerts runtime-versions              # expect: … all <n> running containers are on them
+   ```
+   If a container is listed, its app's build or deploy didn't land. Its repo's
+   Actions run says why; `nagaya status` shows what's running.
+4. 🖥️ The push to ofuma's `stg` **starts staging** if it was down (§7.6).
+   When its deploy is green and you've looked: `nagaya stg down ofuma`.
+
+- **A new nginx stable line (1.30 → 1.32):** a minor bump like any other, but
+  read nginx's CHANGES for the new line first, and check a frontend's runtime
+  values after the deploy, as in §10.4 step 3.
+- **A major Node bump (24 → 26):** don't go straight to `sites.yaml`. In
+  each app repo, on a branch, do what §10.2 did with the new major: the
+  `ARG NODE_VERSION`, `.nvmrc`, `engines` and `@types/node` (`pnpm install`).
+  Run lint, typecheck and test, then build in CI with *Deploy after building*
+  unticked (§10.3). Ship one repo at a time (§10.4). Bump `sites.yaml` last,
+  so the sync finds every repo up to date.
+  ⚠️ **Node 25+ no longer ships corepack.** ofuma's Dockerfiles run `corepack
+  enable && corepack prepare pnpm@…`, and on 26 that fails. Switch them to
+  `npm install -g pnpm@<its packageManager version>`, as the futari
+  Dockerfiles already do, on that branch.
+- **`→ problems` for a repo:** someone hard-coded a version there. The run
+  lists each line. Fix them in that repo (`FROM node:${NODE_VERSION}-alpine`,
+  `node-version-file: .nvmrc`), then re-run *Runtime sync* by hand. A repo
+  with problems is never pushed to.
+- **Rolling back:** revert the nagaya commit and push. The sync pushes the old
+  versions back, and every app rebuilds on them.
+
 ### Tokens and pinned tools
+
+**The runtime-sync token** (`NAGAYA_SYNC_TOKEN`, an Actions secret on this
+repo, §10.5). It's a fine-grained PAT that **expires after a year**, with **Contents: read and write** on
+`dmb.futari`, `abm.futari`, `nihongo.futari` and `ofuma.ai` only. It has to
+be a PAT, not `GITHUB_TOKEN`, because a push made with `GITHUB_TOKEN` never
+starts the app repos' deploy workflows. **Symptom when it has expired:** the
+*Runtime sync* run fails at the clone with *Authentication failed*. Apps keep
+running on their current versions. **Fix:** 🌐 GitHub → Settings → Developer
+settings → Fine-grained tokens → regenerate it (same repos and permission).
+Then nagaya → Settings → Secrets → Actions → update `NAGAYA_SYNC_TOKEN`, and
+re-run the workflow.
+
 
 **The GHCR pull token** (`GHCR_TOKEN`, §3.3) has no expiry. It only stops
 working if it is revoked (deleted in GitHub, or revoked by GitHub after a
@@ -2529,6 +2885,11 @@ firewall, compose ports or Caddy.
 - [x] Calendar: the Origin CA certificates' expiry (30 Sep 2041; reminder on
       31 Aug 2041). The GitHub token from §4.2 has no expiry date, so nothing
       to renew; if it is ever revoked, nagaya's CI Apply fails at Terraform.
+- [ ] Phase 10: migrate the four app repos onto the runtime pins and ship
+      Node 24.22.1 + nginx 1.30.6 (§10.2–§10.4), then the sync token (§10.5)
+      and the first sync (§10.6).
+- [ ] Calendar: `NAGAYA_SYNC_TOKEN` (§10.5) expires a year after it is made;
+      put the date here once made. When it lapses, *Runtime sync* fails at the clone.
 - [ ] Now and then: bump rclone, and if a deploy ever fails at the pull,
       replace the GHCR token. Both are in Day-2 → *Tokens and pinned tools*.
 - [ ] `EMAIL_FROM` for the futari apps is `hello@<app>.futari.live`, a subdomain
