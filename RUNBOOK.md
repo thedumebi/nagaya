@@ -2885,11 +2885,14 @@ firewall, compose ports or Caddy.
 - [x] Calendar: the Origin CA certificates' expiry (30 Sep 2041; reminder on
       31 Aug 2041). The GitHub token from §4.2 has no expiry date, so nothing
       to renew; if it is ever revoked, nagaya's CI Apply fails at Terraform.
-- [ ] Phase 10: migrate the four app repos onto the runtime pins and ship
-      Node 24.22.1 + nginx 1.30.6 (§10.2–§10.4), then the sync token (§10.5)
-      and the first sync (§10.6).
-- [ ] Calendar: `NAGAYA_SYNC_TOKEN` (§10.5) expires a year after it is made;
-      put the date here once made. When it lapses, *Runtime sync* fails at the clone.
+- [x] Phase 10 (2026-10-23): dmb, abm, nihongo, ofuma `stg` and ofuma `master`
+      shipped on Node 24.22.1 + nginx 1.30.6, each deploy green with its health
+      checks. `NAGAYA_SYNC_TOKEN` added. The first *Runtime sync* reported
+      `→ up to date` for all five repo branches.
+- [ ] Calendar: `NAGAYA_SYNC_TOKEN` (§10.5) was made on 2026-10-23. Put its
+      expiry date here and in your calendar (GitHub → Settings → Developer
+      settings → Fine-grained tokens shows it). When it lapses, *Runtime sync*
+      fails at the clone.
 - [ ] Now and then: bump rclone, and if a deploy ever fails at the pull,
       replace the GHCR token. Both are in Day-2 → *Tokens and pinned tools*.
 - [ ] `EMAIL_FROM` for the futari apps is `hello@<app>.futari.live`, a subdomain
