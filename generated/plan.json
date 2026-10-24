@@ -517,6 +517,10 @@
       ]
     }
   ],
+  "zones": [
+    "futari.live",
+    "ofuma.ai"
+  ],
   "routes": [
     {
       "host": "futari.live",
@@ -641,6 +645,9 @@
       },
       "runtimeVersions": {
         "every": "17 6 * * *"
+      },
+      "originTls": {
+        "every": "*/5 * * * *"
       }
     }
   },

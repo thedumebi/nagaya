@@ -12,7 +12,8 @@
 #   nagaya backup                    dump every database to R2 (cron runs this nightly)
 #   nagaya drill <db>                restore the newest backup into a scratch DB and compare
 #   nagaya cron <id>                 run one scheduled call from sites.yaml
-#   nagaya alerts <check>|--test     run one alert check from sites.yaml (memory, cloudflare-ranges, runtime-versions)
+#   nagaya alerts <check>|--test     run one alert check from sites.yaml (memory, cloudflare-ranges, runtime-versions, origin-tls)
+#   nagaya install-certs             read {"<domain>": "<PEM>"} on stdin; install each changed origin certificate, reload Caddy
 #   nagaya status                    what is running, tags, staging state, memory
 #   nagaya psql <db>                 interactive psql as the superuser
 #   nagaya core <compose args>       docker compose on core.yml, with nagaya's secrets loaded
@@ -34,6 +35,7 @@ TAGS_DIR="$STATE_DIR/tags"
 STAGING_STATE_DIR="$STATE_DIR/stg"
 ROLES_DIR="$STATE_DIR/roles"
 ALERTS_DIR="$STATE_DIR/alerts"
+CERTS_DIR="$ROOT/certs"
 
 # ───────────────────────────── helpers ─────────────────────────────
 
@@ -42,13 +44,13 @@ info() { printf '• %s\n' "$*"; }
 ok()   { printf '✓ %s\n' "$*"; }
 warn() { printf '! %s\n' "$*" >&2; }
 
-usage() { sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 # Wrong arguments for one command: print just that command's line from the
 # header above, not the whole help.
 usage_for() { # <command>
   local usage_line
-  usage_line="$(sed -n '3,20p' "$0" | sed 's/^# *//' | grep -E "^nagaya $1( |$)" || true)"
+  usage_line="$(sed -n '3,21p' "$0" | sed 's/^# *//' | grep -E "^nagaya $1( |$)" || true)"
   [[ -n "$usage_line" ]] || usage 1
   printf 'usage: %s\n' "$usage_line" >&2
   exit 1
@@ -558,6 +560,112 @@ cmd_apply() {
   ok "apply finished"
 }
 
+# ───────────────────────────── origin certificates ─────────────────────────────
+
+# Terraform holds each zone's Cloudflare Origin CA certificate; the box holds
+# the key it was issued for (RUNBOOK.md §3.6). The Apply workflow pipes
+# Terraform's certificates here after every run, so a certificate Terraform
+# replaces (which revokes the old one) can never be left behind on the box.
+
+public_key_hash() { # cert|key <file>   prints nothing if the file can't be read
+  local public_key
+  if [[ "$1" == cert ]]; then
+    public_key="$(openssl x509 -noout -pubkey -in "$2" 2>/dev/null || true)"
+  else
+    public_key="$(openssl pkey -pubout -in "$2" 2>/dev/null || true)"
+  fi
+  [[ -n "$public_key" ]] && sha256sum <<<"$public_key" | cut -c1-16 || true
+}
+
+# The certificate Caddy actually serves for <host>, as its serial; empty if
+# the handshake fails.
+served_serial() { # <host>
+  { openssl s_client -connect 127.0.0.1:443 -servername "$1" </dev/null 2>/dev/null \
+      | openssl x509 -noout -serial 2>/dev/null | cut -d= -f2; } || true
+}
+
+file_serial() { openssl x509 -noout -serial -in "$1" | cut -d= -f2; }
+
+# The zones whose Caddy-served certificate is not the installed file.
+zones_served_stale() {
+  local domain
+  for domain in $(plan '.zones[]'); do
+    [[ -f "$CERTS_DIR/$domain.pem" ]] || continue
+    if [[ "$(served_serial "$domain")" != "$(file_serial "$CERTS_DIR/$domain.pem")" ]]; then echo "$domain"; fi
+  done
+}
+
+# Caddy reads its certificate files when its config loads. A forced reload
+# normally picks the new ones up; if it still serves an old one, restart it.
+reload_caddy_certs() {
+  docker exec caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
+  local stale attempt
+  stale="$(zones_served_stale)"
+  if [[ -n "$stale" ]]; then
+    warn "caddy still serves an old certificate for $(echo $stale) after a reload; restarting it"
+    docker restart caddy >/dev/null
+    for attempt in $(seq 1 15); do
+      sleep 1
+      stale="$(zones_served_stale)"
+      [[ -z "$stale" ]] && break
+    done
+  fi
+  [[ -z "$stale" ]] || die "caddy does not serve the installed certificate for $(echo $stale); see docker logs caddy"
+  ok "caddy serves the installed certificates"
+}
+
+cmd_install_certs() {
+  local certificates domain
+  # Public data, a few KB; anything bigger is not a pair of certificates.
+  certificates="$(head -c 65536)"
+  jq -e 'type == "object" and all(.[]; type == "string")' <<<"$certificates" >/dev/null \
+    || die 'install-certs: expected {"<domain>": "<PEM>", …} on stdin'
+  for domain in $(jq -r 'keys[]' <<<"$certificates"); do
+    plan --arg d "$domain" '.zones | index($d) != null' | grep -qx true \
+      || die "install-certs: $domain is not a zone in sites.yaml"
+  done
+
+  local changed=() new_file
+  for domain in $(plan '.zones[]'); do
+    if [[ "$(jq --arg d "$domain" 'has($d)' <<<"$certificates")" != true ]]; then
+      warn "$domain: no certificate given (no CSR in terraform/csr/ yet?); left as it is"
+      continue
+    fi
+    [[ -f "$CERTS_DIR/$domain.key" ]] || die "$domain: $CERTS_DIR/$domain.key is missing (RUNBOOK.md §3.6)"
+    new_file="$CERTS_DIR/.$domain.pem.new"
+    jq -j --arg d "$domain" '.[$d]' <<<"$certificates" > "$new_file"
+    # Refuse anything that would break the zone: not a certificate, not for
+    # this domain, expired, or not issued for the key on this box.
+    openssl x509 -noout -in "$new_file" 2>/dev/null \
+      || { rm -f "$new_file"; die "$domain: what was sent is not a PEM certificate"; }
+    openssl x509 -noout -checkhost "$domain" -in "$new_file" | grep -q 'does match' \
+      && openssl x509 -noout -checkhost "x.$domain" -in "$new_file" | grep -q 'does match' \
+      || { rm -f "$new_file"; die "$domain: the certificate does not cover $domain and *.$domain"; }
+    openssl x509 -noout -checkend 0 -in "$new_file" >/dev/null \
+      || { rm -f "$new_file"; die "$domain: the certificate has expired"; }
+    [[ -n "$(public_key_hash key "$CERTS_DIR/$domain.key")" \
+      && "$(public_key_hash cert "$new_file")" == "$(public_key_hash key "$CERTS_DIR/$domain.key")" ]] \
+      || { rm -f "$new_file"; die "$domain: the certificate was not issued for $CERTS_DIR/$domain.key (a CSR from another key?)"; }
+
+    if cmp -s "$new_file" "$CERTS_DIR/$domain.pem"; then
+      rm -f "$new_file"; info "$domain: certificate unchanged (serial $(file_serial "$CERTS_DIR/$domain.pem"))"
+      continue
+    fi
+    [[ -f "$CERTS_DIR/$domain.pem" ]] && cp -p "$CERTS_DIR/$domain.pem" "$CERTS_DIR/$domain.pem.prev"
+    chmod 644 "$new_file"; mv -f "$new_file" "$CERTS_DIR/$domain.pem"
+    ok "$domain: installed certificate serial $(file_serial "$CERTS_DIR/$domain.pem") (the old one is $domain.pem.prev)"
+    changed+=("$domain")
+  done
+
+  # Also when nothing changed: a Caddy still serving an older file is the
+  # same outage, and this is where CI would notice it.
+  if (( ${#changed[@]} )) || [[ -n "$(zones_served_stale)" ]]; then
+    reload_caddy_certs
+  else
+    ok "caddy serves the installed certificates"
+  fi
+}
+
 # ───────────────────────────── staging ─────────────────────────────
 
 # A site that joins another site's network needs that site running: doca
@@ -849,7 +957,8 @@ cmd_alerts() { # <check>|--test
     memory)            check_memory ;;
     cloudflare-ranges) check_cloudflare_ranges ;;
     runtime-versions)  check_runtime_versions ;;
-    *) die "unknown alert check \"$1\" (sites.yaml alerts.checks: memory, cloudflare-ranges, runtime-versions)" ;;
+    origin-tls)        check_origin_tls ;;
+    *) die "unknown alert check \"$1\" (sites.yaml alerts.checks: memory, cloudflare-ranges, runtime-versions, origin-tls)" ;;
   esac
 }
 
@@ -943,6 +1052,102 @@ check_memory() {
     ok "alert sent: $subject"
   else
     # State is only written on success, so the next run tries again.
+    warn "could not send the alert email; will retry next run"
+    return 1
+  fi
+}
+
+# The origin-tls check (cron, on its own schedule). Two views of the origin
+# certificates:
+#   - on the box: for each zone, the certificate Caddy serves is the file in
+#     /srv/nagaya/certs, it was issued for the key next to it, and it has more
+#     than 30 days left;
+#   - through Cloudflare: no route answers 525/526 (Cloudflare rejects the
+#     origin's TLS, as when the box serves a certificate Terraform has since
+#     replaced and so revoked) or 521/522/523 (Cloudflare cannot reach it).
+#     Failing routes are tried once more before they count.
+# One email per distinct set of problems, and one when they clear.
+edge_status() { curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$1/" || true; }
+
+check_origin_tls() {
+  local problems=() domain pem served_serial_now
+  for domain in $(plan '.zones[]'); do
+    pem="$CERTS_DIR/$domain.pem"
+    if [[ ! -f "$pem" ]]; then problems+=("• $domain: $pem is missing."); continue; fi
+    local cert_key_hash; cert_key_hash="$(public_key_hash cert "$pem")"
+    if [[ -z "$cert_key_hash" || "$cert_key_hash" != "$(public_key_hash key "$CERTS_DIR/$domain.key")" ]]; then
+      problems+=("• $domain: $pem was not issued for $domain.key (or one of them is unreadable); every TLS handshake for the zone fails.")
+    fi
+    openssl x509 -noout -checkend $(( 30 * 86400 )) -in "$pem" >/dev/null \
+      || problems+=("• $domain: the certificate expires $(openssl x509 -noout -enddate -in "$pem" | cut -d= -f2).")
+    served_serial_now="$(served_serial "$domain")"
+    [[ "$served_serial_now" == "$(file_serial "$pem")" ]] \
+      || problems+=("• $domain: Caddy serves serial ${served_serial_now:-(nothing)}, but $pem is $(file_serial "$pem"). Caddy was not reloaded after the file changed.")
+  done
+
+  # Each route through Cloudflare. Failing hosts are tried once more, together,
+  # after 10 s, so a single slow edge doesn't send an email.
+  local host status failing=() still_failing=()
+  for host in $(plan '.routes[].host'); do
+    status="$(edge_status "$host")"
+    if [[ "$status" =~ ^52[12356]$ ]]; then failing+=("$host"); fi
+  done
+  if (( ${#failing[@]} )); then
+    sleep 10
+    for host in "${failing[@]}"; do
+      status="$(edge_status "$host")"
+      if [[ "$status" =~ ^52[12356]$ ]]; then still_failing+=("$status $host"); fi
+    done
+  fi
+  local code hosts
+  for code in 525 526 521 522 523; do
+    hosts="$(printf '%s\n' ${still_failing[@]+"${still_failing[@]}"} | awk -v code="$code" '$1 == code { printf "%s%s", sep, $2; sep = ", " }')"
+    [[ -n "$hosts" ]] || continue
+    case "$code" in
+      525|526) problems+=("• Cloudflare answers $code (it rejects the origin's certificate: expired, revoked, or not for the name) for $hosts.") ;;
+      *)       problems+=("• Cloudflare answers $code (it cannot reach the box: firewall, Caddy down) for $hosts.") ;;
+    esac
+  done
+
+  mkdir -p "$ALERTS_DIR"
+  local state_file="$ALERTS_DIR/origin-tls" problem_text
+  problem_text="$(printf '%s\n' ${problems[@]+"${problems[@]}"})"
+  if (( ${#problems[@]} == 0 )); then
+    if [[ -f "$state_file" ]]; then
+      if send_mail "[nagaya] resolved: origin TLS" "Every zone's certificate is served as installed and no site gets a 52x from Cloudflare any more. Sent by $(hostname) at $(date -u +%FT%TZ)."; then
+        rm -f "$state_file"; ok "reported origin TLS resolved"
+      else
+        warn "could not send the email; will retry next run"; return 1
+      fi
+    else
+      info "$(date -u +%FT%TZ) origin TLS fine: $(plan '.zones | join(", ")') served as installed, no 52x through Cloudflare"
+    fi
+    return 0
+  fi
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "$(tr '\n' ' ' <<<"$problem_text")"
+  if [[ "$(cat "$state_file" 2>/dev/null || true)" == "$problem_text" ]]; then
+    info "already reported"
+    return 0
+  fi
+  local email_text
+  email_text="$(
+    echo "$problem_text"
+    echo
+    echo "── on the box: what is installed and what Caddy serves"
+    for domain in $(plan '.zones[]'); do
+      [[ -f "$CERTS_DIR/$domain.pem" ]] || continue
+      echo "$domain  file $(file_serial "$CERTS_DIR/$domain.pem")  served $(served_serial "$domain")  $(openssl x509 -noout -enddate -in "$CERTS_DIR/$domain.pem")"
+    done
+    echo
+    echo "A 526 with the file and the served serial equal usually means Terraform replaced the"
+    echo "certificate (revoking this one): re-run the Apply workflow, which installs Terraform's"
+    echo "certificates on the box. RUNBOOK.md \"Day-2 → Origin certificates\"."
+    echo "Sent by $(hostname) at $(date -u +%FT%TZ)."
+  )"
+  if send_mail "[nagaya] ALERT: origin TLS: $(head -1 <<<"$problem_text" | sed 's/^• //' | cut -c1-80)" "$email_text"; then
+    printf '%s' "$problem_text" > "$state_file"
+    ok "origin TLS alert sent"
+  else
     warn "could not send the alert email; will retry next run"
     return 1
   fi
@@ -1158,7 +1363,9 @@ cmd_status() {
 
 cmd_ssh_dispatch() {
   # authorized_keys: command="/srv/nagaya/bin/nagaya ssh-dispatch",restrict ssh-ed25519 AAAA… nagaya-ci
-  # The CI key can do exactly two things, whatever it asks for.
+  # The CI key can do exactly three things, whatever it asks for. install-certs
+  # reads Terraform's certificates on stdin and installs only ones issued for
+  # the keys already on the box.
   local requested="${SSH_ORIGINAL_COMMAND:-}"
   requested="${requested#nagaya }"
   if [[ "$requested" =~ ^deploy\ ([a-z0-9-]+)\ ([0-9a-f]{7,40})(\ --only\ ([a-z0-9-]+(,[a-z0-9-]+)*))?$ ]]; then
@@ -1168,8 +1375,10 @@ cmd_ssh_dispatch() {
     exec "$0" deploy "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
   elif [[ "$requested" == apply ]]; then
     exec "$0" apply
+  elif [[ "$requested" == install-certs ]]; then
+    exec "$0" install-certs
   fi
-  die "refused: \"$requested\" (the CI key may only run: deploy <project> <sha> [--only <services>] | apply)"
+  die "refused: \"$requested\" (the CI key may only run: deploy <project> <sha> [--only <services>] | apply | install-certs)"
 }
 
 # ───────────────────────────── main ─────────────────────────────
@@ -1182,6 +1391,9 @@ main() {
   esac
   require_command jq; require_command docker; require_command dotenvx; require_command flock
   [[ -f "$PLAN_FILE" ]] || die "$PLAN_FILE is missing; is $ROOT a checkout of the nagaya repo?"
+  # Needs no secrets, and reads its certificates from stdin: run it as is,
+  # not under dotenvx.
+  if [[ "$command" == install-certs ]]; then take_lock; cmd_install_certs; return; fi
   load_secrets "$command" "$@"
 
   case "$command" in

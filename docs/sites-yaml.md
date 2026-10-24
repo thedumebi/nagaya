@@ -219,6 +219,8 @@ alerts:
       every: "7 6 * * *"
     runtime-versions:
       every: "17 6 * * *"
+    origin-tls:
+      every: "*/5 * * * *"
 ```
 Emails about the box itself, sent to `to` through Brevo with nagaya's
 `BREVO_API_KEY`.
@@ -229,7 +231,7 @@ Emails about the box itself, sent to `to` through Brevo with nagaya's
 - **To switch a check off,** delete it. **To change when it runs,** change
   its `every`. Nothing in code changes for either.
 - **Only kinds nagaya has code for are accepted:** `memory`,
-  `cloudflare-ranges` and `runtime-versions`. A new kind (say, a container that keeps restarting)
+  `cloudflare-ranges`, `runtime-versions` and `origin-tls`. A new kind (say, a container that keeps restarting)
   needs its code in `bin/nagaya` as well as an entry here, and render refuses
   an unknown kind rather than scheduling a check that does nothing.
 - **To email more people,** make `to` a list.
@@ -278,6 +280,23 @@ any of these is true:
 - **One email per distinct set of findings.** When the set changes (a
   container catches up, a new release ships) you get a new email.
 - **It never changes anything.** The bump stays your change to `sites.yaml`.
+
+#### `origin-tls`
+Checks each zone's Cloudflare Origin CA certificate from two sides.
+
+| Finding | Means |
+|---|---|
+| Caddy serves a different serial than `/srv/nagaya/certs/<domain>.pem` | The file changed and Caddy wasn't reloaded with `--force` |
+| The certificate wasn't issued for `<domain>.key`, or one is unreadable | Every TLS handshake for that zone fails |
+| Fewer than 30 days left | Renew it (RUNBOOK.md "Day-2 → Origin certificates") |
+| A route answers **525/526** through Cloudflare | Cloudflare rejects the origin's certificate. It is expired, revoked (Terraform replaced it), or not for that name |
+| A route answers **521/522/523** through Cloudflare | Cloudflare can't reach the box: firewall, Caddy down |
+
+- **A failing route is tried once more,** 10 s later, before it counts.
+- **One email per distinct set of problems,** and one when they clear.
+- **It never changes anything.** The fix for a revoked certificate is
+  re-running the Apply workflow, which installs Terraform's certificates
+  (`nagaya install-certs`).
 
 Omit the whole `alerts:` block to switch every alert off.
 
