@@ -169,6 +169,7 @@ test('each alert check gets its own crontab line, on its own schedule', () => {
   assert.match(crontab, /^\*\/5 \* \* \* \* \/srv\/nagaya\/bin\/nagaya alerts memory /m)
   assert.match(crontab, /^7 6 \* \* \* \/srv\/nagaya\/bin\/nagaya alerts cloudflare-ranges /m)
   assert.match(crontab, /^17 6 \* \* \* \/srv\/nagaya\/bin\/nagaya alerts runtime-versions >> \/srv\/nagaya\/logs\/alerts-runtime-versions\.log /m)
+  assert.match(crontab, /^\*\/5 \* \* \* \* \/srv\/nagaya\/bin\/nagaya alerts origin-tls >> \/srv\/nagaya\/logs\/alerts-origin-tls\.log /m)
   const hourly = loadModel(SITES_YAML.replace('every: "7 6 * * *"', 'every: "0 * * * *"'))
   assert.match(renderAll(hourly, CLOUDFLARE_RANGES).get('generated/crontab')!, /^0 \* \* \* \* \S+ alerts cloudflare-ranges /m)
 })
@@ -177,6 +178,12 @@ test('the box gets the runtime pins it checks', () => {
   const plan = JSON.parse(renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES).get('generated/plan.json')!)
   assert.deepEqual(plan.runtime, { node: '24.22.1', nginx: '1.30.6' })
   assert.deepEqual(plan.alerts.checks.runtimeVersions, { every: '17 6 * * *' })
+})
+
+test('the box knows each zone, for its certificate files and the origin-tls check', () => {
+  const plan = JSON.parse(renderAll(loadModel(SITES_YAML), CLOUDFLARE_RANGES).get('generated/plan.json')!)
+  assert.deepEqual(plan.zones, ['futari.live', 'ofuma.ai'])
+  assert.deepEqual(plan.alerts.checks.originTls, { every: '*/5 * * * *' })
 })
 
 test('an alert check nagaya has no code for is an error', () => {

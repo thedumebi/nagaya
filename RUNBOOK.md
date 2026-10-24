@@ -826,12 +826,13 @@ Rules for the compose files that keep this true:
   `cf-ranges` workflow opens a PR when they do, and its body reminds you. The
   script replaces every `nagaya-cf` and `NAGAYA-CF` rule with the current list.
 
-**2.10** 💻 **LAPTOP** + 🖥️ **SERVER** — the CI key, able to do exactly two things.
+**2.10** 💻 **LAPTOP** + 🖥️ **SERVER** — the CI key, able to do exactly three things.
 
 Every repo's CI SSHes in as `deploy` with one shared key. On the box that key
 is pinned to `nagaya ssh-dispatch`, which accepts only `deploy <project> <sha>`
-(optionally `--only <services>`) or `apply` and refuses anything else. So a leaked key can redeploy a commit
-that is already in GHCR, and nothing more.
+(optionally `--only <services>`), `apply` or `install-certs`, and refuses anything else. So a leaked key can redeploy a commit
+that is already in GHCR, or install an origin certificate that was issued for
+the key already on the box (which it cannot get without Cloudflare), and nothing more.
 
 💻 **LAPTOP**:
 ```bash
@@ -847,7 +848,7 @@ printf 'command="/srv/nagaya/bin/nagaya ssh-dispatch",restrict %s\n' "$(cat ~/.s
 Prove the restriction from the laptop:
 ```bash
 ssh -i ~/.ssh/nagaya_ci -o IdentitiesOnly=yes deploy@152.53.205.203 'ls /'
-# expect: ✗ refused: "ls /" (the CI key may only run: deploy <project> <sha> | apply)
+# expect: ✗ refused: "ls /" (the CI key may only run: deploy <project> <sha> [--only <services>] | apply | install-certs)
 ```
 
 Then the private half as an Actions secret on the five repos (Terraform sets
@@ -2480,11 +2481,11 @@ merge. For an emergency without CI: `git revert` locally, `pnpm render`,
 | `/srv/nagaya` | this repo (`git pull` by `nagaya apply`). Why `/srv`: [docs/box-layout.md](docs/box-layout.md) |
 | `/srv/nagaya/generated/` | the rendered Caddyfile, compose files, crontab, firewall, plan.json |
 | `/srv/nagaya/keys/` | apps' `.env.keys` (`*.keys`) and nagaya's per-environment splits (`*.production.key`, `*.staging.key`). `chmod 700` |
-| `/srv/nagaya/certs/` | Origin CA `<domain>.pem` + `.key`. `chmod 700` |
+| `/srv/nagaya/certs/` | Origin CA `<domain>.pem` + `.key`, and `<domain>.pem.prev` once `install-certs` has replaced one. `chmod 700` |
 | `/srv/nagaya/state/tags/` | the image tag each project runs (`<project>.env`) and the previous one (`.prev.env`) |
 | `/srv/nagaya/state/stg/` | `up` / `down` per staging project |
 | `/srv/nagaya/state/alerts/` | alert bookkeeping: last swap counters, when each alert was last sent |
-| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts-memory.log`, `alerts-cloudflare-ranges.log`, `alerts-runtime-versions.log` |
+| `/srv/nagaya/logs/` | `backup.log`, `cron.log`, `alerts-memory.log`, `alerts-cloudflare-ranges.log`, `alerts-runtime-versions.log`, `alerts-origin-tls.log` |
 | `/srv/shared/futari/geodata` | GeoLite2, shared by the futari backends |
 | `/etc/docker/daemon.json` | log rotation, address pool (§2.7) |
 
@@ -2798,10 +2799,49 @@ Nooklet's "Upgrading PostgreSQL" section is the long-form version. The short for
 
 ### Origin certificates
 
-They are valid for 15 years, and Cloudflare sends **no** reminder. Renewing
-is §3.6 (new key + CSR on the box), committing the CSR, a Terraform apply
-(the certificate is replaced), and §4.11 (copy, verify the modulus), then
-`docker exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+Terraform holds each zone's Cloudflare Origin CA certificate; the box holds
+the key it was issued for (§3.6). **Every Apply run installs Terraform's
+certificates on the box** (`nagaya install-certs`, after `nagaya apply`). It
+refuses one that isn't for the zone or wasn't issued for the box's key,
+keeps the replaced file as `<domain>.pem.prev`, and reloads Caddy. If a forced
+reload still serves the old certificate, it restarts Caddy instead. A
+certificate that didn't change is left alone.
+
+**Why:** when Terraform replaces a certificate, it **revokes** the old one.
+On 2026-10-04 an Apply replaced both certificates 11 minutes after §4.11 had
+copied them to the box (the hostname-order bug, since fixed with
+`ignore_changes`). The box kept serving the revoked pair. Cloudflare accepted
+it until 2026-10-24 ~05:40 UTC and then answered **526** on every proxied
+site, for about four hours.
+
+**`alerts.checks.origin-tls`** (every 5 minutes) emails when:
+- Caddy serves a different certificate than the file on disk;
+- a certificate and its key don't pair, or there are fewer than 30 days left;
+- any route answers 525/526 (Cloudflare rejects the origin's certificate) or
+  521/522/523 (Cloudflare can't reach the box) through Cloudflare.
+
+**If a 526 email arrives** and the file and served serials in it are equal,
+the box's certificate is no longer the one Terraform holds. Re-run **Actions →
+Apply → Run workflow**; its last step installs Terraform's certificates. To
+check by hand on the box:
+```bash
+cd /srv/nagaya/certs
+for d in futari.live ofuma.ai; do
+  echo "$d file   $(openssl x509 -noout -serial -in $d.pem)"
+  echo "$d served $(openssl s_client -connect 127.0.0.1:443 -servername $d </dev/null 2>/dev/null | openssl x509 -noout -serial)"
+done
+```
+To go back to the previous certificate:
+`cp <domain>.pem.prev <domain>.pem`, then
+`docker exec caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile`.
+**`--force` matters:** without it, Caddy sees an unchanged Caddyfile and
+keeps the certificate it already loaded.
+
+**Renewing** (they are valid for 15 years, and Cloudflare sends **no**
+reminder; `origin-tls` emails 30 days before) is §3.6 (new key + CSR on the
+box) and committing the CSR. The Apply run that follows replaces the
+certificate and installs it. The new key must be in place on the box first,
+or `install-certs` refuses the certificate.
 
 ---
 

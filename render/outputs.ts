@@ -148,6 +148,7 @@ function renderAlertsPlan(model: Model) {
   const memoryCheck = alerts.checks.memory
   const cloudflareRangesCheck = alerts.checks['cloudflare-ranges']
   const runtimeVersionsCheck = alerts.checks['runtime-versions']
+  const originTlsCheck = alerts.checks['origin-tls']
   return {
     to: [alerts.to].flat(),
     from: alerts.from,
@@ -166,6 +167,7 @@ function renderAlertsPlan(model: Model) {
         : null,
       cloudflareRanges: cloudflareRangesCheck ? { every: cloudflareRangesCheck.every } : null,
       runtimeVersions: runtimeVersionsCheck ? { every: runtimeVersionsCheck.every } : null,
+      originTls: originTlsCheck ? { every: originTlsCheck.every } : null,
     },
   }
 }
@@ -204,6 +206,8 @@ export function renderPlan(model: Model): string {
         credentials: service.credentials,
       })),
     })),
+    // One Origin CA certificate per zone: /srv/nagaya/certs/<domain>.pem and .key.
+    zones: model.zones.map(zone => zone.domain),
     routes: model.routes.map(route => ({ host: route.host, project: route.project, variant: route.variant, kind: route.kind })),
     crons: model.projects.flatMap(project => project.crons),
     // The pins every app builds with; `nagaya alerts runtime-versions` checks them.
