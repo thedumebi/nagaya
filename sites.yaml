@@ -96,6 +96,13 @@ alerts:
     # yours (RUNBOOK.md "Day-2 → Bumping Node or nginx").
     runtime-versions:
       every: "17 6 * * *"
+    # The origin certificates. On the box: the cert Caddy serves is the file
+    # on disk, pairs with its key, and has 30+ days left. Through Cloudflare:
+    # no site answers 525/526 (Cloudflare rejects the origin's TLS) or
+    # 521/522/523 (cannot reach it). Emails when the set of problems changes
+    # and when it clears. RUNBOOK.md "Day-2 → Origin certificates".
+    origin-tls:
+      every: "*/5 * * * *"
 
 # ─────────────── Apps: one per domain; sites are the subdomains under it ───────────────
 apps:

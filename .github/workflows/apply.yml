@@ -1,5 +1,6 @@
 # Merging to master applies sites.yaml: Terraform first (DNS, secrets), then
-# `nagaya apply` on the box (containers, Caddy, crontab).
+# `nagaya apply` on the box (containers, Caddy, crontab), then Terraform's
+# origin certificates onto the box (`nagaya install-certs`).
 name: Apply
 
 on:
@@ -39,6 +40,9 @@ jobs:
     defaults:
       run:
         working-directory: terraform
+    outputs:
+      # {"<domain>": "<PEM>"}: public data. Empty when Terraform was skipped.
+      origin_certificates: ${{ steps.certs.outputs.json }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
@@ -62,10 +66,18 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.16.5
+          # The wrapper adds its own lines to stdout; `terraform output -json`
+          # below must be JSON only.
+          terraform_wrapper: false
       - if: steps.secrets.outputs.ready == 'true'
         run: terraform init -input=false -backend-config=backend.hcl
       - if: steps.secrets.outputs.ready == 'true'
         run: terraform apply -input=false -auto-approve
+      # Replacing an Origin CA certificate revokes the old one, so whatever
+      # Terraform holds now is what the box must serve (the box job installs it).
+      - if: steps.secrets.outputs.ready == 'true'
+        id: certs
+        run: echo "json=$(terraform output -json origin_certificates | jq -c .)" >> "$GITHUB_OUTPUT"
 
   box:
     name: nagaya apply
@@ -78,6 +90,7 @@ jobs:
       # Set to "true" by RUNBOOK.md §5.1, after the first `nagaya apply` was
       # run by hand. Until then CI never touches the box.
       BOX_READY: ${{ vars.NAGAYA_BOX_READY }}
+      ORIGIN_CERTIFICATES: ${{ needs.terraform.outputs.origin_certificates }}
     steps:
       - name: Run nagaya apply on the box
         run: |
@@ -93,5 +106,14 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           # The key is pinned to `nagaya ssh-dispatch` on the box, which only
-          # accepts "apply" or "deploy <project> <sha>".
+          # accepts "apply", "deploy <project> <sha>" or "install-certs".
           ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" apply
+          # After apply, which pulls the nagaya that knows install-certs. The
+          # box refuses a certificate not issued for its own key, and only
+          # reloads Caddy when one changed (or Caddy serves an older one).
+          if [ -n "$ORIGIN_CERTIFICATES" ] && [ "$ORIGIN_CERTIFICATES" != "{}" ]; then
+            printf '%s' "$ORIGIN_CERTIFICATES" \
+              | ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "deploy@$HOST" install-certs
+          else
+            echo "::notice::No origin certificates from Terraform; leaving the box's as they are."
+          fi

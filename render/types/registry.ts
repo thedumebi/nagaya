@@ -242,6 +242,13 @@ export const runtimeVersionsCheckConfigSchema = z.object({
 }).strict()
 export type RuntimeVersionsCheckConfig = z.infer<typeof runtimeVersionsCheckConfigSchema>
 
+// The origin certificates: what Caddy serves vs the files, and what
+// Cloudflare's edge makes of it.
+export const originTlsCheckConfigSchema = z.object({
+  every: z.string(), // cron schedule
+}).strict()
+export type OriginTlsCheckConfig = z.infer<typeof originTlsCheckConfigSchema>
+
 // Emails about the box, sent through Brevo. Each check is a kind bin/nagaya
 // knows how to run (`nagaya alerts <check>`), with its own schedule; an
 // unknown kind is a render error, since there would be no code behind it.
@@ -252,6 +259,7 @@ export const alertsConfigSchema = z.object({
     'memory': memoryCheckConfigSchema.optional(),
     'cloudflare-ranges': cloudflareRangesCheckConfigSchema.optional(),
     'runtime-versions': runtimeVersionsCheckConfigSchema.optional(),
+    'origin-tls': originTlsCheckConfigSchema.optional(),
   }).strict(),
 }).strict()
 export type AlertsConfig = z.infer<typeof alertsConfigSchema>
