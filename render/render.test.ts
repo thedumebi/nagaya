@@ -157,7 +157,7 @@ test('plan.json keys are all camelCase', () => {
 
 test('a cron id is <project>-<name>; two crons with one name in a site is an error', () => {
   const cronIds = loadModel(SITES_YAML).projects.flatMap(project => project.crons.map(cron => cron.id))
-  assert.deepEqual(cronIds, ['futari-nihongo-reminders'])
+  assert.deepEqual(cronIds, ['futari-nihongo-reminders', 'futari-nihongo-cleanup-unconfirmed'])
   assert.throws(loadEdited(sitesYaml => sitesYaml.replace(
     '        cron:\n          - name: reminders',
     '        cron:\n          - name: reminders\n            at: "0 * * * *"\n            service: backend\n            post: /other\n          - name: reminders',

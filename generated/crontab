@@ -10,3 +10,4 @@ PATH=/usr/local/bin:/usr/bin:/bin
 17 6 * * * /srv/nagaya/bin/nagaya alerts runtime-versions >> /srv/nagaya/logs/alerts-runtime-versions.log 2>&1
 */5 * * * * /srv/nagaya/bin/nagaya alerts origin-tls >> /srv/nagaya/logs/alerts-origin-tls.log 2>&1
 */15 * * * * /srv/nagaya/bin/nagaya cron futari-nihongo-reminders >> /srv/nagaya/logs/cron.log 2>&1
+17 * * * * /srv/nagaya/bin/nagaya cron futari-nihongo-cleanup-unconfirmed >> /srv/nagaya/logs/cron.log 2>&1

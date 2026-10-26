@@ -206,6 +206,14 @@ apps:
             service: backend
             post: /notifications/run-reminders
             secret_header: { name: x-cron-secret, env: NIHONGO_CRON_SECRET }   # key in nagaya's .env.production
+          # Deletes password sign-ups whose email was never confirmed within
+          # 24 hours. Hourly is plenty: the window is a day, and each run is one
+          # DELETE. Same secret as the reminders.
+          - name: cleanup-unconfirmed
+            at: "17 * * * *"
+            service: backend
+            post: /users/cleanup-unconfirmed
+            secret_header: { name: x-cron-secret, env: NIHONGO_CRON_SECRET }
 
   ofuma:
     domain: ofuma.ai
