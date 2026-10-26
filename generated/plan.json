@@ -618,6 +618,17 @@
         "name": "x-cron-secret",
         "env": "NIHONGO_CRON_SECRET"
       }
+    },
+    {
+      "id": "futari-nihongo-cleanup-unconfirmed",
+      "at": "17 * * * *",
+      "container": "futari-nihongo-backend",
+      "port": 3008,
+      "path": "/users/cleanup-unconfirmed",
+      "secretHeader": {
+        "name": "x-cron-secret",
+        "env": "NIHONGO_CRON_SECRET"
+      }
     }
   ],
   "runtime": {
