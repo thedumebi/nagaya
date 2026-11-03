@@ -132,6 +132,14 @@ apps:
       - { type: CNAME, name: brevo1._domainkey, content: b1.futari-live.dkim.brevo.com }
       - { type: CNAME, name: brevo2._domainkey, content: b2.futari-live.dkim.brevo.com }
       - { type: TXT,   name: _dmarc,            content: "v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com" }
+      # dmb and go send as hello@<app>.futari.live, and Brevo signs those with
+      # each subdomain's own DKIM key. Without these CNAMEs Brevo cannot sign, and
+      # it rewrites the From to hello@<id>.brevosend.com. DMARC comes from
+      # _dmarc.futari.live above.
+      - { type: CNAME, name: brevo1._domainkey.dmb,     content: b1.dmb-futari-live.dkim.brevo.com }
+      - { type: CNAME, name: brevo2._domainkey.dmb,     content: b2.dmb-futari-live.dkim.brevo.com }
+      - { type: CNAME, name: brevo1._domainkey.nihongo, content: b1.nihongo-futari-live.dkim.brevo.com }
+      - { type: CNAME, name: brevo2._domainkey.nihongo, content: b2.nihongo-futari-live.dkim.brevo.com }
 
     sites:
       root:
