@@ -80,9 +80,10 @@ against the new image first, then change the digest here.
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://piston.stg.ofuma.ai/api/v2/runtimes   # 401
 curl -s -u "piston:$PISTON_AUTH_TOKEN" https://piston.stg.ofuma.ai/api/v2/runtimes | jq -r '.[] | "\(.language) \(.version)"'
-# python 3.10.0, node 18.15.0 (javascript), typescript 5.0.3, java 15.0.2, gcc 10.2.0 (c++), go 1.16.2
+# python 3.14.10, node 24.22.2 (javascript), typescript 5.9.3, java 25.0.5, gcc 10.2.0 (c++), go 1.27.3,
+# plus the previous versions until the rollback window closes
 curl -s -u "piston:$PISTON_AUTH_TOKEN" https://piston.stg.ofuma.ai/api/v2/execute \
   -H 'Content-Type: application/json' \
-  -d '{"language":"python","version":"3.10.0","files":[{"content":"print(6*7)"}]}' | jq -r .run.stdout   # 42
+  -d '{"language":"python","version":"3.14.10","files":[{"content":"print(6*7)"}]}' | jq -r .run.stdout   # 42
 curl -s -o /dev/null -w '%{http_code}\n' -u "piston:$PISTON_AUTH_TOKEN" -X DELETE https://piston.stg.ofuma.ai/api/v2/packages   # 404
 ```
