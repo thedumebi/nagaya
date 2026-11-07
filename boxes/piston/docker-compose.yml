@@ -83,7 +83,7 @@ services:
   #   docker compose --profile install run --rm piston-install-runtimes
   # Versions MUST match PM-Interview-Bank/lib/codeRunner.ts PISTON_VERSION_MAP.
   piston-install-runtimes:
-    image: curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
     profiles:
       - install
     restart: "no"
