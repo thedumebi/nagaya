@@ -11,4 +11,5 @@ updates:
     ignore:
       # Changing this image means re-validating every coding spec first
       # (boxes/piston/README.md, "Change the Piston image"), so it's done by hand.
-      - dependency-name: ghcr.io/engineer-man/piston
+      # Dependabot names images without the registry, so no ghcr.io/ here.
+      - dependency-name: engineer-man/piston
