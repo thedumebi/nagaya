@@ -55,7 +55,7 @@ done
 curl -s "$api/runtimes" | jq -r '.[] | "  \(.language) \(.version)"'
 
 MIB=$((1024 * 1024))
-printf '\n%-26s %-6s %9s %9s %10s\n' case result wall_ms cpu_ms memory_mib
+printf '\n%-26s %-6s %9s %9s %10s %12s %11s\n' case result wall_ms cpu_ms memory_mib compile_ms compile_mib
 
 # check <case> <language> <version> <file> <run memory> <compile memory> <max wall ms, 0 = none> <required|info> <source>
 check() {
@@ -71,8 +71,10 @@ check() {
   if [ "$(jq -r '.run.stdout // ""' <<<"$response" | tr -d '[:space:]')" != OK ]; then result=FAIL; fi
   wall=$(jq -r '.run.wall_time // 0' <<<"$response")
   if [ "$max_wall" -gt 0 ] && [ "$wall" -gt "$max_wall" ]; then result=SLOW; fi
-  printf '%-26s %-6s %9s %9s %10s\n' "$name" "$result" "$wall" "$(jq -r '.run.cpu_time // 0' <<<"$response")" \
-    "$(jq -r '((.run.memory // 0) / 1048576 | floor)' <<<"$response")"
+  printf '%-26s %-6s %9s %9s %10s %12s %11s\n' "$name" "$result" "$wall" "$(jq -r '.run.cpu_time // 0' <<<"$response")" \
+    "$(jq -r '((.run.memory // 0) / 1048576 | floor)' <<<"$response")" \
+    "$(jq -r '.compile.wall_time // "-"' <<<"$response")" \
+    "$(jq -r 'if .compile then ((.compile.memory // 0) / 1048576 | floor) else "-" end' <<<"$response")"
   if [ "$result" != pass ]; then
     jq -c '{message, compile: (.compile // null | if . then {code, status, message, stderr: (.stderr | .[0:600])} else . end), run: (.run // null | if . then {code, signal, status, message, stderr: (.stderr | .[0:600])} else . end)}' <<<"$response" || echo "$response"
     if [ "$kind" = required ]; then failures=$((failures + 1)); fi
@@ -80,13 +82,14 @@ check() {
 }
 
 # The test program in each recipe, at runProgram's limits (256 MiB run, 512 MiB
-# compile) and at runFreeCode's tighter ones (134 MB both). Those match
-# PM-Interview-Bank's lib/codeRunner.ts.
+# compile) and at runFreeCode's tighter run limit (134 MB). Those match
+# PM-Interview-Bank's lib/codeRunner.ts. tsc 5.9 on Node 24 can't compile in
+# 134 MB, so runFreeCode has to use the same 512 MiB compile limit as runProgram.
 FREE=134217728
 while read -r language package version file test; do
   source=$(cat "$here/$package/$version/$test")
   check "$language" "$language" "$version" "$file" $((256 * MIB)) $((512 * MIB)) 0 required "$source"
-  check "$language free-run" "$language" "$version" "$file" "$FREE" "$FREE" 0 required "$source"
+  check "$language free-run" "$language" "$version" "$file" "$FREE" $((512 * MIB)) 0 required "$source"
 done <<'EOF'
 javascript node 24.22.2 main.js test.js
 typescript typescript 5.9.3 main.ts test.ts
@@ -105,6 +108,13 @@ go_harness=$(cat "$here/go/1.27.3/test-harness-imports.go")
 for run in 1 2 3 4 5; do
   check "go harness imports #$run" go 1.27.3 main.go $((256 * MIB)) $((512 * MIB)) 5000 required "$go_harness"
 done
+
+# Each job copies the 51 MB seed cache in, and the job's memory limit may count
+# it. A solution using most of its 256 MiB must still run.
+check "go allocates 200 MiB" go 1.27.3 main.go $((256 * MIB)) $((512 * MIB)) 0 required \
+  'package main
+import "fmt"
+func main() { b := make([]byte, 200<<20); for i := range b { b[i] = 1 }; fmt.Println("OK"); _ = b[0] }'
 
 # A package outside the seed, for information: this is the cold-build cost a
 # candidate pays for an unusual import.
