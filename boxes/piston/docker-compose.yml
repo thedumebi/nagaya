@@ -15,7 +15,8 @@ name: piston
 
 services:
   caddy:
-    image: caddy:2-alpine
+    # Pinned by digest (what 2-alpine resolved to on 2026-11-07), so it only changes on purpose.
+    image: caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     container_name: piston-caddy
     restart: unless-stopped
     ports:
@@ -82,7 +83,7 @@ services:
   #   docker compose --profile install run --rm piston-install-runtimes
   # Versions MUST match PM-Interview-Bank/lib/codeRunner.ts PISTON_VERSION_MAP.
   piston-install-runtimes:
-    image: curlimages/curl:8.10.1
+    image: curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
     profiles:
       - install
     restart: "no"

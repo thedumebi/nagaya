@@ -32,6 +32,8 @@ jobs:
   plan:
     name: Terraform plan
     needs: render
+    # Dependabot PRs get no Actions secrets, and only touch boxes/piston's compose file.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     defaults:
       run:

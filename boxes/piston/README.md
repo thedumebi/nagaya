@@ -14,7 +14,7 @@ also spike to ~1.4 GB, which nagaya's 4 GB is not sized for.
 
 | Container | Does |
 |---|---|
-| `piston-caddy` | TLS for `piston.stg.ofuma.ai` (Let's Encrypt, HTTP-01 on port 80), basic auth, proxy to Piston |
+| `piston-caddy` | TLS for `piston.stg.ofuma.ai` (Let's Encrypt, HTTP-01 on port 80), basic auth, and a proxy to Piston for only `POST /api/v2/execute` and `GET /api/v2/runtimes` (everything else is 404). Pinned by digest |
 | `piston` | Piston, pinned by digest, privileged, capped at 1400 MiB |
 
 Volumes (created by the old ofuma compose, reused so nothing is reinstalled):
@@ -67,7 +67,12 @@ versions must match PM-Interview-Bank's `lib/codeRunner.ts` `PISTON_VERSION_MAP`
 docker compose --profile install run --rm piston-install-runtimes
 ```
 
-**Change the Piston image:** re-run PM-Interview-Bank's `coding:revalidate`
+**Update Caddy or curl:** Dependabot opens a PR when a pinned digest has a newer
+image (weekly, `.github/dependabot.yml`). Merging deploys nothing: copy the
+compose file to the box as above, then run the checks below. Caddy faces the
+internet, so don't let its PRs sit.
+
+**Change the Piston image:** Dependabot ignores this one. Re-run PM-Interview-Bank's `coding:revalidate`
 against the new image first, then change the digest here.
 
 ## Checks
@@ -79,4 +84,5 @@ curl -s -u "piston:$PISTON_AUTH_TOKEN" https://piston.stg.ofuma.ai/api/v2/runtim
 curl -s -u "piston:$PISTON_AUTH_TOKEN" https://piston.stg.ofuma.ai/api/v2/execute \
   -H 'Content-Type: application/json' \
   -d '{"language":"python","version":"3.10.0","files":[{"content":"print(6*7)"}]}' | jq -r .run.stdout   # 42
+curl -s -o /dev/null -w '%{http_code}\n' -u "piston:$PISTON_AUTH_TOKEN" -X DELETE https://piston.stg.ofuma.ai/api/v2/packages   # 404
 ```

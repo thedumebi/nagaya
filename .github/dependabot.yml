@@ -1,0 +1,14 @@
+# Opens a PR when a pinned image on the Piston box has a newer digest. Nothing
+# deploys from these: after merging, follow boxes/piston/README.md to copy the
+# file to the box.
+version: 2
+updates:
+  - package-ecosystem: docker-compose
+    directory: /boxes/piston
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    ignore:
+      # Changing this image means re-validating every coding spec first
+      # (boxes/piston/README.md, "Change the Piston image"), so it's done by hand.
+      - dependency-name: ghcr.io/engineer-man/piston
