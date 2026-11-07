@@ -1,0 +1,53 @@
+# Build the Piston language packages and test them on a real Piston.
+#
+# On a pull request touching the recipes: build and test only.
+# Run by hand on master: also publish to the piston-pkgs release, which is what
+# the box's PISTON_REPO_URL reads. Publishing changes nothing on the box.
+#
+# boxes/piston/packages/README.md
+name: Piston packages
+
+on:
+  pull_request:
+    paths:
+      - boxes/piston/packages/**
+      - .github/workflows/piston-packages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash boxes/piston/packages/build-all.sh "$RUNNER_TEMP/packages"
+      - run: bash boxes/piston/packages/smoke-test.sh "$RUNNER_TEMP/packages"
+
+  publish:
+    name: Build, test and publish
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash boxes/piston/packages/build-all.sh "$RUNNER_TEMP/packages"
+      - run: bash boxes/piston/packages/smoke-test.sh "$RUNNER_TEMP/packages"
+      - name: Publish
+        run: |
+          bash boxes/piston/packages/make-index.sh "$RUNNER_TEMP/packages" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/piston-pkgs"
+          gh release view piston-pkgs >/dev/null 2>&1 ||
+            gh release create piston-pkgs --title "Piston packages" --latest=false --target "$GITHUB_SHA" \
+              --notes "Language packages for the Piston box. See boxes/piston/packages/README.md."
+          gh release upload piston-pkgs "$RUNNER_TEMP"/packages/*.pkg.tar.gz --clobber
+          # Last, so the index never lists a package that isn't uploaded yet.
+          gh release upload piston-pkgs "$RUNNER_TEMP/packages/index" --clobber

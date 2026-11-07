@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+CODE=$1.js
+shift
+
+node "$CODE" "$@"

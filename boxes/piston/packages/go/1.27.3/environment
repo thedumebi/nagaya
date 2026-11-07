@@ -1,0 +1,8 @@
+export PATH=$PWD/go/bin:$PATH
+export GOPATH=$PWD/gopath
+export GO_CACHE_SEED=$PWD/gocache-seed
+# Offline, and no cgo: the seed cache only matches builds with these settings.
+export CGO_ENABLED=0
+export GOTOOLCHAIN=local
+export GOPROXY=off
+export GOSUMDB=off
