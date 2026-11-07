@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+mv "$1" "$1".go
+filename=*.go
+shift
+
+# A plain copy on purpose: fresh timestamps keep Go from trimming the entries as old.
+cp -r "$GO_CACHE_SEED" .gocache
+GOCACHE=$PWD/.gocache go run $filename "$@"

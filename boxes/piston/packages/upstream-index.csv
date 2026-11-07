@@ -1,0 +1,6 @@
+gcc,10.2.0,a3ffa0672b992ee772217c64080671f5a4ee1250fea19ac2c8d5205a5682bdb3,https://github.com/engineer-man/piston/releases/download/pkgs/gcc-10.2.0.pkg.tar.gz
+go,1.16.2,328492dfad3281453fc27e464fb007a9a7784c6a3cf0a97c755d7727ccc66cc2,https://github.com/engineer-man/piston/releases/download/pkgs/go-1.16.2.pkg.tar.gz
+java,15.0.2,f695d4ae1a8c783a9bcdd31f23795a980d938e50260254cf6a95560622c092f7,https://github.com/engineer-man/piston/releases/download/pkgs/java-15.0.2.pkg.tar.gz
+node,18.15.0,83f79c6ae66e6bf332dd8ea456a92c14669425c298282e13707f675df48e44a6,https://github.com/engineer-man/piston/releases/download/pkgs/node-18.15.0.pkg.tar.gz
+python,3.10.0,8577b879b52f346459cfb743b31795355b094178db5271010bec32ce814688a3,https://github.com/engineer-man/piston/releases/download/pkgs/python-3.10.0.pkg.tar.gz
+typescript,5.0.3,b530d429397169ece55673cebac85a9eb49b7c204b188848d2f9a376c80adff8,https://github.com/engineer-man/piston/releases/download/pkgs/typescript-5.0.3.pkg.tar.gz

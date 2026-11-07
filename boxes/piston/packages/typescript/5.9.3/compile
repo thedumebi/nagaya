@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+rename 's/$/\.ts/' "$@" # Add .ts extension
+
+tsc *.ts
