@@ -39,9 +39,9 @@ docker run --rm \
   --entrypoint /bin/bash \
   "$PISTON_IMAGE" \
   -c 'set -euo pipefail
+      trap "chown -R \"\$OWNER\" ." EXIT
       source ./environment
-      if [ -f setup.sh ]; then bash ./setup.sh; fi
-      chown -R "$OWNER" .'
+      if [ -f setup.sh ]; then bash ./setup.sh; fi'
 
 echo "--- $language $version: package"
 jq '.build_platform = "docker-debian"' "$pkg/metadata.json" > "$pkg/pkg-info.json"

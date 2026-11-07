@@ -11,9 +11,13 @@ rm -rf "$build"
 
 du -sh "$GO_CACHE_SEED"
 
-# Piston caps each file a job writes (max_file_size, 10 MB), and that cap
-# applies to the copy in `run`.
-too_big=$(find "$GO_CACHE_SEED" -type f -size +9M)
+echo "largest seed cache files:"
+find "$GO_CACHE_SEED" -type f -printf '%s %f\n' | sort -rn | head -5
+
+# Piston caps each file a job writes, and that cap applies to the copy in `run`.
+# The default is 10 MB, too small for the largest entries, so metadata.json
+# raises it to 32 MiB for Go. Keep this check in step with that.
+too_big=$(find "$GO_CACHE_SEED" -type f -size +31M)
 if [ -n "$too_big" ]; then
   echo "seed cache files over Piston's file size limit:" >&2
   echo "$too_big" >&2

@@ -54,6 +54,8 @@ asks for exact versions.
 Go 1.20+ ships no precompiled standard library. Each job starts with an empty
 build cache, so without help every run would rebuild it. `setup.sh` compiles
 `test-harness-imports.go` into a seed cache, and `run` copies that into the job.
+Some cache files exceed Piston's default 10 MB file limit, so Go's `metadata.json`
+raises it to 32 MiB.
 
 If the app's Go harness starts importing a new package
 (`lib/coding/codegen/go.ts`), add it to `test-harness-imports.go`. An import
