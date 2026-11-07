@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 
-mv "$1" "$1".java
-filename=$1.java
+# Upstream's recipe renames the file to add .java. Don't when it already has it:
+# since Java 22 the launcher also looks for classes in the file's directory, so
+# Main.java.java gets compiled a second time ("duplicate class") as soon as the
+# code names anything like java.util.List in full.
+filename=$1
 shift
+case "$filename" in
+  *.java) ;;
+  *)
+    mv "$filename" "$filename.java"
+    filename=$filename.java
+    ;;
+esac
 java "$filename" "$@"

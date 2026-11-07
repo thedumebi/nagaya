@@ -44,6 +44,8 @@ services:
     # Raise per-request caps so codeRunner.ts's 10s run / 15s compile aren't rejected with HTTP 400
     # (piston defaults are 3s/10s). Mirrors PM-Interview-Bank/infra/piston/20-deployment.yaml.
     environment:
+      # Upstream stopped updating its packages; ours are built in packages/.
+      PISTON_REPO_URL: https://github.com/thedumebi/nagaya/releases/download/piston-pkgs/index
       PISTON_RUN_TIMEOUT: "10000"
       PISTON_COMPILE_TIMEOUT: "15000"
       # CPU-time ceilings (piston defaults 3s/10s kill legitimate Java/Python runs) and the
@@ -82,6 +84,7 @@ services:
   # Run once after piston is up (idempotent / re-runnable):
   #   docker compose --profile install run --rm piston-install-runtimes
   # Versions MUST match PM-Interview-Bank/lib/codeRunner.ts PISTON_VERSION_MAP.
+  # The old versions stay listed until the app has run on the new ones for a week, for rollback.
   piston-install-runtimes:
     image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
     profiles:
@@ -98,7 +101,7 @@ services:
         echo "waiting for piston API..."
         until curl -sf "$$PISTON/runtimes" >/dev/null; do sleep 3; done
         echo "piston up; installing runtimes"
-        for pair in python:3.10.0 node:18.15.0 typescript:5.0.3 java:15.0.2 gcc:10.2.0 go:1.16.2; do
+        for pair in python:3.10.0 node:18.15.0 typescript:5.0.3 java:15.0.2 go:1.16.2 python:3.14.10 node:24.22.2 typescript:5.9.3 java:25.0.5 go:1.27.3 gcc:10.2.0; do
           lang="$${pair%%:*}"; ver="$${pair##*:}"
           echo "installing $$lang $$ver"
           curl -sf -X POST "$$PISTON/packages" -H 'Content-Type: application/json' \
