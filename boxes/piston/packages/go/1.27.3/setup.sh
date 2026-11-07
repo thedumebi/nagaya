@@ -12,7 +12,7 @@ rm -rf "$build"
 du -sh "$GO_CACHE_SEED"
 
 echo "largest seed cache files:"
-find "$GO_CACHE_SEED" -type f -printf '%s %f\n' | sort -rn | head -5
+find "$GO_CACHE_SEED" -type f -printf '%s %f\n' | sort -rn | sed -n 1,5p # not head: it closes the pipe, which pipefail treats as failure
 
 # Piston caps each file a job writes, and that cap applies to the copy in `run`.
 # The default is 10 MB, too small for the largest entries, so metadata.json
