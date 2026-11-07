@@ -13,5 +13,15 @@ piston.stg.ofuma.ai {
 		# PM-Interview-Bank's PISTON_AUTH_TOKEN is the password it matches.
 		import /etc/caddy/piston-auth
 	}
-	reverse_proxy piston:2000
+	# PM-Interview-Bank only calls these two. Piston has no auth of its own, so
+	# without this the token would also reach POST/DELETE /packages (install or
+	# remove runtimes) and the /connect WebSocket. Package changes go through the
+	# internal network instead (piston-install-runtimes in docker-compose.yml).
+	@api expression `(method('POST') && path('/api/v2/execute')) || (method('GET') && path('/api/v2/runtimes'))`
+	handle @api {
+		reverse_proxy piston:2000
+	}
+	handle {
+		respond 404
+	}
 }
