@@ -13,7 +13,9 @@ services:
       - /srv/nagaya/static:/srv/static:ro
       - caddy-data:/data
       - caddy-config:/config
-    mem_limit: 128m
+    mem_limit: 256m
+    environment:
+      GOMEMLIMIT: 200MiB
     networks:
       - edge
     labels:
