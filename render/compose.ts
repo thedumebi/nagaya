@@ -53,7 +53,12 @@ export function renderCore(model: Model): string {
       'caddy-data:/data',
       'caddy-config:/config',
     ],
-    mem_limit: '128m',
+    // 128m was too tight: caddy hit the cap ~1,200 times in its first four
+    // weeks, and each hit makes the kernel swap caddy out even with GBs free
+    // (the 2026-11-15 swap alert). Go does not read the cgroup limit, so
+    // GOMEMLIMIT (~80% of the cap) makes its GC work harder before the cap.
+    mem_limit: '256m',
+    environment: { GOMEMLIMIT: '200MiB' },
     networks: [EDGE_NETWORK],
     labels: { [PROJECT_LABEL]: CORE_PROJECT },
   }
